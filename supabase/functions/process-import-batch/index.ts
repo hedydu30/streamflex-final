@@ -243,12 +243,13 @@ serve(async (req) => {
           });
 
         } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
           console.error(`Job ${jobId}: discovery error on folder ${currentFolderId}:`, e);
           // Skip this folder and continue with the rest
           if (remainingQueue.length > 0) {
             await supabase.from("import_jobs").update({
               discovery_queue: remainingQueue,
-              error: `Erreur scan dossier ${currentFolderId}: ${e.message} (continué)`,
+              error: `Erreur scan dossier ${currentFolderId}: ${errMsg} (continué)`,
             }).eq("id", jobId);
             selfChain(supabaseUrl, serviceKey, anonKey, jobId);
           } else {
@@ -264,12 +265,12 @@ serve(async (req) => {
             } else {
               await supabase.from("import_jobs").update({
                 status: "error",
-                error: `Erreur récupération fichiers: ${e.message}`,
+                error: `Erreur récupération fichiers: ${errMsg}`,
                 fichier_token: null,
               }).eq("id", jobId);
             }
           }
-          return new Response(JSON.stringify({ error: e.message }), {
+          return new Response(JSON.stringify({ error: errMsg }), {
             status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
