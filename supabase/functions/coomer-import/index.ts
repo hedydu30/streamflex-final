@@ -168,10 +168,13 @@ serve(async (req) => {
             metadata: v.metadata || {},
             model_id: modelId,
           }));
+          
+          // LA CORRECTION VITALE EST ICI
           const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
             .select("id");
+            
           if (insErr) {
             errors += rows.length;
             lastError = insErr;
@@ -259,9 +262,10 @@ serve(async (req) => {
             model_id: modelId,
           }));
 
+          // ET ICI
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
             .select("id");
 
           if (insertError) {
@@ -328,7 +332,6 @@ serve(async (req) => {
         return new Response(JSON.stringify({ videos: allVideos, total_urls: urls.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // LA VRAIE FONCTION IMPORT-BATCH RESTAURÉE ET CORRIGÉE
       case "import-batch": {
         const { videos } = body;
         if (!videos || !Array.isArray(videos) || videos.length === 0) {
@@ -391,9 +394,10 @@ serve(async (req) => {
             model_id: v.model_name ? modelIdMap.get(v.model_name.toLowerCase()) || null : null,
           }));
 
+          // ET ICI AUSSI
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
             .select("id");
 
           if (insertError) {
@@ -461,7 +465,8 @@ serve(async (req) => {
               metadata: metadata || {},
               model_id,
             },
-            { onConflict: "user_id, title", ignoreDuplicates: true },
+            // ET ENFIN ICI
+            { onConflict: "user_id,original_url", ignoreDuplicates: true },
           )
           .select()
           .single();
@@ -527,29 +532,20 @@ function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
   const baseUrl = PROXY_BASE_URL;
 
-  if (post.file && isVideoFile(post.file.name || post.file.path)) {
-    videos.push({
-      url: `${baseUrl}${post.file.path}`,
-      title: post.title || post.file.name || "Vidéo",
-      thumbnail_url: post.file.path ? `${baseUrl}/thumbnail${post.file.path}` : null,
-      model_name: userId,
-      metadata: { service, user_id: userId, post_id: post.id, published: post.published },
-    });
-  }
-
-  if (post.attachments) {
-    for (const att of post.attachments) {
-      if (isVideoFile(att.name || att.path)) {
-        videos.push({
-          url: `${baseUrl}${att.path}`,
-          title: att.name || post.title || "Vidéo",
-          thumbnail_url: null,
-          model_name: userId,
-          metadata: { service, user_id: userId, post_id: post.id, published: post.published },
-        });
-      }
+  const createEntry = (file: any) => {
+    if (file && isVideoFile(file.name || file.path)) {
+      videos.push({
+        url: `${baseUrl}${file.path}`,
+        title: post.title || file.name || "Vidéo",
+        thumbnail_url: file.path ? `${baseUrl}/thumbnail${file.path}` : null,
+        model_name: userId,
+        metadata: { service, user_id: userId, post_id: post.id, published: post.published },
+      });
     }
-  }
+  };
+
+  if (post.file) createEntry(post.file);
+  if (post.attachments) post.attachments.forEach((att: any) => createEntry(att));
 
   return videos;
 }
