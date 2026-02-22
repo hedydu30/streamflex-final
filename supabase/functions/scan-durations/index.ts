@@ -6,338 +6,168 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const BATCH_SIZE = 50; // videos per invocation
-const CONCURRENCY_DIRECT = 20;
-const CONCURRENCY_FICHIER = 4;
-const FICHIER_DELAY_MS = 1600;
+// --- CONFIGURATION TURBO ---
+const BATCH_SIZE = 150;        // On traite 150 vidéos par passage
+const CONCURRENCY_LIMIT = 50;  // 50 scans en simultané pour les liens directs
+const CONCURRENCY_FICHIER = 5; // Un peu plus rapide pour 1fichier
+const FICHIER_DELAY_MS = 1200; // Délai réduit entre les requêtes Alldebrid
 const ALLDEBRID_API = "https://api.alldebrid.com/v4";
 
-// Parse MP4 mvhd atom to extract duration in seconds
+// Parse MP4 mvhd atom to extract duration
 function parseMp4Duration(buffer: ArrayBuffer): number | null {
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
-
-  // Search for 'mvhd' atom (0x6D766864)
   for (let i = 0; i < bytes.length - 32; i++) {
     if (bytes[i] === 0x6d && bytes[i + 1] === 0x76 && bytes[i + 2] === 0x68 && bytes[i + 3] === 0x64) {
       const version = bytes[i + 4];
       let timescale: number, duration: number;
-
       if (version === 0) {
         timescale = view.getUint32(i + 16);
         duration = view.getUint32(i + 20);
       } else {
-        // Version 1: 64-bit, use lower 32 bits (sufficient for most videos)
         timescale = view.getUint32(i + 24);
         duration = Number(view.getBigUint64(i + 28));
       }
-
-      if (timescale > 0 && duration > 0) {
-        return Math.round(duration / timescale);
-      }
+      if (timescale > 0) return Math.floor(duration / timescale);
     }
   }
   return null;
 }
 
-// Proxy coomer.st URLs via Cloudflare Worker (Supabase can't reach coomer.st directly)
-const COOMER_PROXY = "https://still-disk-5cf6streamflex.hatem44655f.workers.dev";
-function resolveUrl(url: string): string {
-  if (url.includes("coomer.st") || url.includes("coomer.su")) {
-    const path = url.replace(/https?:\/\/[^/]+/, "");
-    return `${COOMER_PROXY}${path}`;
-  }
-  return url;
-}
-
-// Get duration from a video URL via range requests on MP4 header
-async function getVideoDuration(url: string): Promise<number | null> {
-  url = resolveUrl(url);
+async function fetchVideoDuration(url: string): Promise<number | null> {
   try {
-    // Try first 2MB (moov atom at start = faststart)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
+
     const resp = await fetch(url, {
-      headers: { Range: "bytes=0-2097151" },
-      signal: AbortSignal.timeout(15000),
+      headers: { Range: "bytes=0-150000" }, // On prend un peu plus de buffer pour être sûr
+      signal: controller.signal,
     });
-
+    
+    clearTimeout(timeout);
     if (!resp.ok && resp.status !== 206) return null;
-
     const buffer = await resp.arrayBuffer();
-    const dur = parseMp4Duration(buffer);
-    if (dur && dur > 0) return dur;
-
-    // moov might be at the end; try last 2MB
-    const rangeHeader = resp.headers.get("content-range");
-    const contentLength = rangeHeader ? parseInt(rangeHeader.split("/")[1] || "0") : 0;
-
-    if (contentLength > 2097152) {
-      const start = contentLength - 2097152;
-      const endResp = await fetch(url, {
-        headers: { Range: `bytes=${start}-${contentLength - 1}` },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (endResp.ok || endResp.status === 206) {
-        const endBuffer = await endResp.arrayBuffer();
-        return parseMp4Duration(endBuffer);
-      }
-    }
-
-    return null;
+    return parseMp4Duration(buffer);
   } catch {
     return null;
   }
 }
 
-// Resolve a 1fichier link via AllDebrid
-async function resolveDebrid(link: string, token: string): Promise<string | null> {
-  try {
-    const params = new URLSearchParams({
-      agent: "StreamApp",
-      apikey: token,
-      link,
-    });
-    const resp = await fetch(`${ALLDEBRID_API}/link/unlock?${params}`, {
-      signal: AbortSignal.timeout(20000),
-    });
-    const data = await resp.json();
-    if (data.status === "success" && data.data?.link) {
-      return data.data.link;
+// Fonction utilitaire pour gérer un pool de promesses (concurrence réelle)
+async function pool(items: any[], concurrency: number, task: (item: any) => Promise<void>) {
+  const executing = new Set<Promise<void>>();
+  for (const item of items) {
+    const p = task(item).then(() => executing.delete(p));
+    executing.add(p);
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
     }
-    return null;
-  } catch {
-    return null;
   }
-}
-
-// Pool runner: process items with limited concurrency
-async function runPool<T>(items: T[], concurrency: number, handler: (item: T) => Promise<void>, delayMs = 0) {
-  let idx = 0;
-  const worker = async () => {
-    while (true) {
-      const i = idx++;
-      if (i >= items.length) return;
-      if (delayMs > 0 && i > 0) await new Promise((r) => setTimeout(r, delayMs));
-      await handler(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  await Promise.all(executing);
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const supabase = createClient(supabaseUrl, serviceKey);
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const alldebridKey = Deno.env.get("ALLDEBRID_API_KEY");
+    const supabase = createClient(supabaseUrl, serviceKey);
+
     const { job_id } = await req.json();
-    if (!job_id) {
-      return new Response(JSON.stringify({ error: "job_id requis" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!job_id) return new Response("job_id requis", { status: 400 });
 
-    // Load job
-    const { data: job, error: jobErr } = await supabase
-      .from("duration_scan_jobs")
-      .select("*")
-      .eq("id", job_id)
-      .single();
+    const { data: job } = await supabase.from("duration_scan_jobs").select("*").eq("id", job_id).single();
+    if (!job || job.status === "completed") return new Response("Job non trouvé ou fini");
 
-    if (jobErr || !job) {
-      return new Response(JSON.stringify({ error: "Job introuvable" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    if (job.status === "cancelled" || job.status === "completed") {
-      return new Response(JSON.stringify({ status: job.status }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Update status to processing
-    await supabase.from("duration_scan_jobs").update({ status: "processing" }).eq("id", job_id);
-
-    // Get AllDebrid token
-    const { data: setting } = await supabase
-      .from("admin_settings")
-      .select("value")
-      .eq("id", "alldebrid_token")
-      .single();
-    const debridToken = setting?.value || null;
-
-    // Get videos without duration for this user
-    const { data: videos, error: vErr } = await supabase
+    // On récupère les vidéos qui n'ont pas encore de durée
+    const { data: videos } = await supabase
       .from("imported_videos")
-      .select("id, original_url, download_url, source")
-      .eq("user_id", job.user_id)
+      .select("id, download_url, source")
       .is("duration_seconds", null)
-      .order("imported_at", { ascending: true })
       .limit(BATCH_SIZE);
 
-    if (vErr || !videos || videos.length === 0) {
-      // No more videos to scan - completed
-      await supabase
-        .from("duration_scan_jobs")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job_id);
-
-      return new Response(JSON.stringify({ status: "completed", remaining: 0 }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!videos || videos.length === 0) {
+      await supabase.from("duration_scan_jobs").update({ status: "completed" }).eq("id", job_id);
+      return new Response(JSON.stringify({ status: "completed" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Count total remaining for progress
-    const { count: totalRemaining } = await supabase
-      .from("imported_videos")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", job.user_id)
-      .is("duration_seconds", null);
-
-    // Update total on first run
-    if (job.scanned_count === 0) {
-      await supabase
-        .from("duration_scan_jobs")
-        .update({ total_videos: totalRemaining || videos.length })
-        .eq("id", job_id);
-    }
-
+    let scannedCount = 0;
     let foundCount = 0;
     let errorsCount = 0;
-    let scannedCount = 0;
 
-    // Separate direct vs fichier videos
-    const directVideos = videos.filter((v: any) => {
-      const url = v.download_url || v.original_url || "";
-      return !url.includes("1fichier");
-    });
-    const fichierVideos = videos.filter((v: any) => {
-      const url = v.download_url || v.original_url || "";
-      return url.includes("1fichier");
-    });
+    const directVideos = videos.filter(v => v.source !== '1fichier');
+    const fichierVideos = videos.filter(v => v.source === '1fichier');
 
-    const processVideo = async (video: any, isFichier: boolean) => {
-      // Check if job was cancelled
-      const { data: freshJob } = await supabase.from("duration_scan_jobs").select("status").eq("id", job_id).single();
-      if (freshJob?.status === "cancelled") return;
-
-      let url = video.download_url || video.original_url;
-      if (!url) {
-        errorsCount++;
-        scannedCount++;
-        return;
-      }
-
-      // Resolve debrid for 1fichier
-      if (isFichier && debridToken) {
-        const resolved = await resolveDebrid(url, debridToken);
-        if (!resolved) {
-          errorsCount++;
-          scannedCount++;
-          return;
-        }
-        url = resolved;
-      }
-
-      const duration = await getVideoDuration(url);
-      scannedCount++;
-
-      if (duration && duration > 0) {
+    // --- TRAITEMENT DES VIDÉOS DIRECTES (TURBO) ---
+    await pool(directVideos, CONCURRENCY_LIMIT, async (v) => {
+      const dur = await fetchVideoDuration(v.download_url);
+      if (dur) {
+        await supabase.from("imported_videos").update({ duration_seconds: dur }).eq("id", v.id);
         foundCount++;
-        await supabase.from("imported_videos").update({ duration_seconds: duration }).eq("id", video.id);
+      } else {
+        errorsCount++;
       }
+      scannedCount++;
+    });
 
-      // Update progress periodically (every 5 videos)
-      if (scannedCount % 5 === 0) {
-        await supabase
-          .from("duration_scan_jobs")
-          .update({
-            scanned_count: job.scanned_count + scannedCount,
-            found_count: job.found_count + foundCount,
-            errors_count: job.errors_count + errorsCount,
-            current_video_id: video.id,
-          })
-          .eq("id", job_id);
-      }
-    };
-
-    // Process both types concurrently
-    await Promise.all([
-      runPool(directVideos, CONCURRENCY_DIRECT, (v) => processVideo(v, false)),
-      runPool(fichierVideos, CONCURRENCY_FICHIER, (v) => processVideo(v, true), FICHIER_DELAY_MS),
-    ]);
-
-    // Final progress update for this batch
-    const newScanned = job.scanned_count + scannedCount;
-    const newFound = job.found_count + foundCount;
-    const newErrors = job.errors_count + errorsCount;
-    const remaining = (totalRemaining || 0) - scannedCount;
-
-    if (remaining <= 0) {
-      await supabase
-        .from("duration_scan_jobs")
-        .update({
-          status: "completed",
-          scanned_count: newScanned,
-          found_count: newFound,
-          errors_count: newErrors,
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", job_id);
-    } else {
-      await supabase
-        .from("duration_scan_jobs")
-        .update({
-          scanned_count: newScanned,
-          found_count: newFound,
-          errors_count: newErrors,
-          status: "processing",
-        })
-        .eq("id", job_id);
-
-      // Self-invoke for next batch (fire-and-forget)
-      try {
-        const funcUrl = `${supabaseUrl}/functions/v1/scan-durations`;
-        fetch(funcUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${serviceKey}`,
-          },
-          body: JSON.stringify({ job_id }),
-        }).catch(() => {});
-      } catch {
-        // If self-invoke fails, mark as paused so user can resume
-        await supabase
-          .from("duration_scan_jobs")
-          .update({ status: "paused", error: "Auto-continuation échouée, relancez manuellement" })
-          .eq("id", job_id);
+    // --- TRAITEMENT 1FICHIER (PLUS PRUDENT) ---
+    if (fichierVideos.length > 0 && alldebridKey) {
+      for (let i = 0; i < fichierVideos.length; i += CONCURRENCY_FICHIER) {
+        const chunk = fichierVideos.slice(i, i + CONCURRENCY_FICHIER);
+        await Promise.all(chunk.map(async (v) => {
+          try {
+            const debridResp = await fetch(`${ALLDEBRID_API}/link/unlock?agent=streamflex&apikey=${alldebridKey}&link=${encodeURIComponent(v.download_url)}`);
+            const debridData = await debridResp.json();
+            if (debridData.status === "success") {
+              const dur = await fetchVideoDuration(debridData.data.link);
+              if (dur) {
+                await supabase.from("imported_videos").update({ duration_seconds: dur }).eq("id", v.id);
+                foundCount++;
+              } else {
+                errorsCount++;
+              }
+            } else {
+              errorsCount++;
+            }
+          } catch {
+            errorsCount++;
+          }
+          scannedCount++;
+        }));
+        await new Promise(r => setTimeout(r, FICHIER_DELAY_MS));
       }
     }
 
-    return new Response(
-      JSON.stringify({
-        status: remaining <= 0 ? "completed" : "processing",
-        batch_scanned: scannedCount,
-        batch_found: foundCount,
-        remaining,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (error) {
-    console.error("scan-durations error:", error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Erreur interne" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Mise à jour du job
+    const newScanned = (job.scanned_count || 0) + scannedCount;
+    const newFound = (job.found_count || 0) + foundCount;
+    const newErrors = (job.errors_count || 0) + errorsCount;
+    const { data: totalRemaining } = await supabase.from("imported_videos").select('id', { count: 'exact', head: true }).is("duration_seconds", null);
+    const remaining = totalRemaining?.length || 0;
+
+    await supabase.from("duration_scan_jobs").update({
+      scanned_count: newScanned,
+      found_count: newFound,
+      errors_count: newErrors,
+      status: remaining <= 0 ? "completed" : "processing",
+    }).eq("id", job_id);
+
+    // Auto-relance pour le lot suivant
+    if (remaining > 0) {
+      fetch(`${supabaseUrl}/functions/v1/scan-durations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+        body: JSON.stringify({ job_id }),
+      }).catch(() => {});
+    }
+
+    return new Response(JSON.stringify({ batch_scanned: scannedCount, remaining }), { 
+      headers: { ...corsHeaders, "Content-Type": "application/json" } 
     });
+
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
   }
 });
