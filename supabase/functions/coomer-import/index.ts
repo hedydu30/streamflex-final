@@ -157,7 +157,11 @@ serve(async (req) => {
         while (hasMore && pages < 200) {
           try {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, {
-              headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+  headers: { 
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", 
+    "Accept": "application/json" 
+  },
+});
             });
             if (!r.ok) break;
             const posts = await r.json();
@@ -249,7 +253,12 @@ serve(async (req) => {
         let hasMore = true;
         while (hasMore) {
           try {
-            const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`);
+            const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, {
+  headers: { 
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json"
+  }
+});
             if (!response.ok) break;
             const posts = await response.json();
             if (!posts || posts.length === 0) {
@@ -637,6 +646,7 @@ function extractVideos(post: any, service: string, userId: string) {
 
 function isVideoFile(filename: string): boolean {
   if (!filename) return false;
-  const ext = filename.split(".").pop()?.toLowerCase();
+  const cleanName = filename.split('?')[0]; // Ignore les paramètres web cachés
+  const ext = cleanName.split(".").pop()?.toLowerCase();
   return ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"].includes(ext || "");
 }
