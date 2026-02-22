@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const COOMER_API = "https://coomer.st/api/v1";
+// AJOUT DU PROXY WORKER
 const PROXY_BASE_URL = "https://streamflex-proxy.hedydu30.workers.dev";
 
 serve(async (req) => {
@@ -47,6 +48,12 @@ serve(async (req) => {
     const action = url.searchParams.get("action") || "parse-url";
     const body = req.method === "POST" ? await req.json() : {};
 
+    // HEADERS POUR ÉVITER LE BLOCAGE
+    const browserHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "application/json"
+    };
+
     switch (action) {
       case "search-creators": {
         const query = (body.query || "").trim();
@@ -66,10 +73,7 @@ serve(async (req) => {
           try {
             console.log(`[search-creators] trying ${svc}/${query}`);
             const resp = await fetch(`https://coomer.st/api/v1/${svc}/user/${encodeURIComponent(query)}/profile`, {
-              headers: { 
-                "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-              },
+              headers: browserHeaders, // UTILISATION DES HEADERS
             });
             console.log(`[search-creators] ${svc} status:`, resp.status);
             if (!resp.ok) continue;
@@ -107,7 +111,6 @@ serve(async (req) => {
         const profilePicUrl = `https://img.coomer.st/icons/${service}/${creator_id}`;
         const coverUrl = `https://img.coomer.st/banners/${service}/${creator_id}`;
 
-        // Upsert model
         let modelId: string | null = null;
         const { data: existingModel } = await supabase
           .from("models")
@@ -158,10 +161,7 @@ serve(async (req) => {
         while (hasMore && pages < 200) {
           try {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, {
-              headers: { 
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", 
-                "Accept": "application/json" 
-              },
+              headers: browserHeaders, // UTILISATION DES HEADERS
             });
             if (!r.ok) break;
             const posts = await r.json();
@@ -195,7 +195,7 @@ serve(async (req) => {
           }));
           const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }) // RESTE SUR ORIGINAL_URL
             .select("id");
           if (insErr) {
             errors += rows.length;
@@ -251,10 +251,7 @@ serve(async (req) => {
         while (hasMore) {
           try {
             const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, {
-              headers: { 
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-              }
+              headers: browserHeaders, // UTILISATION DES HEADERS
             });
             if (!response.ok) break;
             const posts = await response.json();
@@ -321,7 +318,7 @@ serve(async (req) => {
 
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }) //
             .select("id");
 
           if (insertError) {
@@ -377,7 +374,7 @@ serve(async (req) => {
             const [, , service, userId, postId] = match;
             if (postId) {
               const response = await fetch(`${COOMER_API}/${service}/user/${userId}/post/${postId}`, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
+                headers: browserHeaders, //
               });
               if (response.ok) {
                 const post = await response.json();
@@ -385,7 +382,7 @@ serve(async (req) => {
               }
             } else {
               const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=0`, {
-                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
+                headers: browserHeaders, //
               });
               if (response.ok) {
                 const posts = await response.json();
@@ -398,7 +395,7 @@ serve(async (req) => {
           if (singleUrl.match(/\.(mp4|m4v|webm|mkv|avi|mov)/i)) {
             const filename = singleUrl.split("/").pop()?.split("?")[0] || "Vidéo";
             allVideos.push({
-              url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+              url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL), // UTILISE LE PROXY
               title: filename,
               thumbnail_url: null,
               model_name: null,
@@ -476,7 +473,7 @@ serve(async (req) => {
 
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }) //
             .select("id");
 
           if (insertError) {
@@ -548,7 +545,7 @@ serve(async (req) => {
               metadata: metadata || {},
               model_id,
             },
-            { onConflict: "user_id, title", ignoreDuplicates: true },
+            { onConflict: "user_id,original_url", ignoreDuplicates: true }, //
           )
           .select()
           .single();
@@ -598,7 +595,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
     return {
       videos: [
         {
-          url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+          url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL), //
           title: fParam || filename,
           thumbnail_url: null,
           model_name: modelName,
@@ -612,7 +609,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
 
 function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
-  const baseUrl = PROXY_BASE_URL;
+  const baseUrl = PROXY_BASE_URL; // UTILISE LE PROXY ICI
 
   if (post.file && isVideoFile(post.file.name || post.file.path)) {
     videos.push({
@@ -643,7 +640,6 @@ function extractVideos(post: any, service: string, userId: string) {
 
 function isVideoFile(filename: string): boolean {
   if (!filename) return false;
-  const cleanName = filename.split('?')[0];
-  const ext = cleanName.split(".").pop()?.toLowerCase();
+  const ext = filename.split(".").pop()?.toLowerCase();
   return ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"].includes(ext || "");
 }
