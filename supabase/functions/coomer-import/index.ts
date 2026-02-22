@@ -130,8 +130,6 @@ serve(async (req) => {
           modelId = created?.id || null;
         }
 
-        // Si skip_fetch=true, le browser a déjà envoyé les vidéos via import-batch
-        // On retourne juste le model_id sans refetcher coomer.st
         if (skip_fetch) {
           return new Response(
             JSON.stringify({
@@ -149,7 +147,6 @@ serve(async (req) => {
           );
         }
 
-        // Sinon fetch depuis coomer.st (cas legacy)
         const allVideos: any[] = [];
         let offset = 0,
           hasMore = true,
@@ -157,11 +154,10 @@ serve(async (req) => {
         while (hasMore && pages < 200) {
           try {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, {
-  headers: { 
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", 
-    "Accept": "application/json" 
-  },
-});
+              headers: { 
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", 
+                "Accept": "application/json" 
+              },
             });
             if (!r.ok) break;
             const posts = await r.json();
@@ -195,7 +191,7 @@ serve(async (req) => {
           }));
           const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
             .select("id");
           if (insErr) {
             errors += rows.length;
@@ -222,7 +218,6 @@ serve(async (req) => {
       }
 
       case "parse-profile": {
-        // Full profile import: fetch videos + profile pic + cover
         const profileUrl = body.url;
         const modelNameOverride = body.model_name;
         if (!profileUrl) {
@@ -243,22 +238,20 @@ serve(async (req) => {
         const [, , service, userId] = match;
         const modelName = modelNameOverride || userId;
 
-        // Fetch profile info (avatar + banner)
         const profilePicUrl = `https://img.coomer.st/icons/${service}/${userId}`;
         const bannerUrl = `https://img.coomer.st/banners/${service}/${userId}`;
 
-        // Fetch all posts with pagination
         const allVideos: any[] = [];
         let offset = 0;
         let hasMore = true;
         while (hasMore) {
           try {
             const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, {
-  headers: { 
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json"
-  }
-});
+              headers: { 
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+              }
+            });
             if (!response.ok) break;
             const posts = await response.json();
             if (!posts || posts.length === 0) {
@@ -273,7 +266,6 @@ serve(async (req) => {
           }
         }
 
-        // Check/create model
         let modelId: string | null = null;
         const { data: existingModel } = await supabase
           .from("models")
@@ -284,7 +276,6 @@ serve(async (req) => {
 
         if (existingModel) {
           modelId = existingModel.id;
-          // Only update images if not already set
           const updates: any = {};
           if (!existingModel.profile_image_url) {
             updates.profile_image_url = profilePicUrl;
@@ -306,7 +297,6 @@ serve(async (req) => {
           modelId = created?.id || null;
         }
 
-        // Import videos in chunks
         const CHUNK_SIZE = 500;
         let totalImported = 0;
         let totalDupes = 0;
@@ -327,7 +317,7 @@ serve(async (req) => {
 
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
             .select("id");
 
           if (insertError) {
@@ -440,7 +430,6 @@ serve(async (req) => {
 
           const missingNames = modelNames.filter((n) => !modelIdMap.has(n.toLowerCase()));
           if (missingNames.length > 0) {
-            // Try to fetch profile pics for new models
             const newModels = await Promise.all(
               missingNames.map(async (name) => {
                 const profilePic = `https://img.coomer.st/icons/onlyfans/${name}`;
@@ -479,7 +468,7 @@ serve(async (req) => {
 
           const { data: imported, error: insertError } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
             .select("id");
 
           if (insertError) {
@@ -551,7 +540,7 @@ serve(async (req) => {
               metadata: metadata || {},
               model_id,
             },
-            { onConflict: "user_id,original_url", ignoreDuplicates: true },
+            { onConflict: "user_id, title", ignoreDuplicates: true },
           )
           .select()
           .single();
@@ -646,7 +635,7 @@ function extractVideos(post: any, service: string, userId: string) {
 
 function isVideoFile(filename: string): boolean {
   if (!filename) return false;
-  const cleanName = filename.split('?')[0]; // Ignore les paramètres web cachés
+  const cleanName = filename.split('?')[0];
   const ext = cleanName.split(".").pop()?.toLowerCase();
   return ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"].includes(ext || "");
 }
