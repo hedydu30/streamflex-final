@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const COOMER_API = "https://coomer.st/api/v1";
+const PROXY_BASE_URL = "https://streamflex-proxy.hedydu30.workers.dev";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -65,7 +66,10 @@ serve(async (req) => {
           try {
             console.log(`[search-creators] trying ${svc}/${query}`);
             const resp = await fetch(`https://coomer.st/api/v1/${svc}/user/${encodeURIComponent(query)}/profile`, {
-              headers: { Accept: "application/json" },
+              headers: { 
+                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              },
             });
             console.log(`[search-creators] ${svc} status:`, resp.status);
             if (!resp.ok) continue;
@@ -372,13 +376,17 @@ serve(async (req) => {
           if (match) {
             const [, , service, userId, postId] = match;
             if (postId) {
-              const response = await fetch(`${COOMER_API}/${service}/user/${userId}/post/${postId}`);
+              const response = await fetch(`${COOMER_API}/${service}/user/${userId}/post/${postId}`, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
+              });
               if (response.ok) {
                 const post = await response.json();
                 allVideos.push(...extractVideos(post, service, userId));
               }
             } else {
-              const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=0`);
+              const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=0`, {
+                headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
+              });
               if (response.ok) {
                 const posts = await response.json();
                 allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId)));
@@ -390,7 +398,7 @@ serve(async (req) => {
           if (singleUrl.match(/\.(mp4|m4v|webm|mkv|avi|mov)/i)) {
             const filename = singleUrl.split("/").pop()?.split("?")[0] || "Vidéo";
             allVideos.push({
-              url: singleUrl,
+              url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
               title: filename,
               thumbnail_url: null,
               model_name: null,
@@ -590,7 +598,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
     return {
       videos: [
         {
-          url: singleUrl,
+          url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
           title: fParam || filename,
           thumbnail_url: null,
           model_name: modelName,
@@ -604,7 +612,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
 
 function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
-  const baseUrl = "https://coomer.st";
+  const baseUrl = PROXY_BASE_URL;
 
   if (post.file && isVideoFile(post.file.name || post.file.path)) {
     videos.push({
