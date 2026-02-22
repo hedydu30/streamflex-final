@@ -129,17 +129,24 @@ serve(async (req) => {
             model_id: modelId,
           }));
           
-          // REMIS SUR "title" POUR CORRESPONDRE A TA BASE DE DONNÉES !
-          const { data: ins } = await supabase
+          // ON RECOUVRE L'ERREUR ICI POUR TE L'AFFICHER
+          const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
             .select("id");
+            
+          if (insErr) {
+            // SI SUPABASE REFUSE, ON AFFICHE POURQUOI DIRECTEMENT :
+            return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+          }
+          
           importedCount += ins?.length || 0;
         }
 
         return new Response(JSON.stringify({ success: true, videos_found: allVideos.length, imported: importedCount }), { headers: corsHeaders });
       }
 
+      // Les autres méthodes restent les mêmes pour ne rien casser
       case "parse-profile": {
         const profileUrl = body.url;
         const match = profileUrl.match(/coomer\.(su|party|st)\/(\w+)\/user\/([^/?\s]+)/);
@@ -169,9 +176,41 @@ serve(async (req) => {
           metadata: v.metadata || {},
         }));
 
-        const { data: ins } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true }).select("id");
+        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
+        if (insErr) {
+           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        }
 
         return new Response(JSON.stringify({ success: true, found: allVideos.length, imported: ins?.length || 0 }), { headers: corsHeaders });
+      }
+
+      case "parse-url": {
+        const coomerUrl = body.url;
+        if (!coomerUrl) return new Response("URL requise", { status: 400 });
+        const urls = coomerUrl.split(/[\n\r]+/).map((u: string) => u.trim()).filter(Boolean);
+        const allVideos: any[] = [];
+
+        for (const singleUrl of urls) {
+          const parsed = parseCoomerUrl(singleUrl);
+          if (parsed) {
+            allVideos.push(...parsed.videos);
+            continue;
+          }
+          const match = singleUrl.match(/coomer\.(su|party|st)\/(\w+)\/user\/([^/]+)(?:\/post\/([^/]+))?/);
+          if (match) {
+            const [, , service, userId, postId] = match;
+            const apiUrl = postId ? `${COOMER_API}/${service}/user/${userId}/post/${postId}` : `${COOMER_API}/${service}/user/${userId}?o=0`;
+            try {
+              const resp = await fetch(apiUrl, { headers: browserHeaders });
+              if (resp.ok) {
+                const data = await resp.json();
+                const posts = Array.isArray(data) ? data : [data];
+                allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId)));
+              }
+            } catch (e) { console.error(e); }
+          }
+        }
+        return new Response(JSON.stringify({ videos: allVideos }), { headers: corsHeaders });
       }
 
       case "import-batch": {
@@ -184,13 +223,16 @@ serve(async (req) => {
           download_url: v.url,
           metadata: v.metadata || {}
         }));
-        const { data: ins } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true }).select("id");
+        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
+        if (insErr) {
+           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        }
         return new Response(JSON.stringify({ success: true, imported: ins?.length || 0 }), { headers: corsHeaders });
       }
 
       case "import-video": {
         const { url: vUrl, title, model_id, metadata } = body;
-        const { data } = await supabase.from("imported_videos").upsert({
+        const { data, error: insErr } = await supabase.from("imported_videos").upsert({
           user_id: user.id,
           source: "coomer",
           title: title || "Vidéo",
@@ -198,7 +240,10 @@ serve(async (req) => {
           download_url: vUrl,
           metadata: metadata || {},
           model_id,
-        }, { onConflict: "user_id, title", ignoreDuplicates: true }).select().single();
+        }, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select().single();
+        if (insErr) {
+           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        }
         return new Response(JSON.stringify({ success: true, video: data }), { headers: corsHeaders });
       }
 
