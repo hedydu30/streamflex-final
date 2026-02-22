@@ -55,7 +55,12 @@ serve(async (req) => {
     switch (action) {
       case "search-creators": {
         const query = (body.query || "").trim();
-        if (!query) return new Response(JSON.stringify({ error: "query requis" }), { status: 400, headers: corsHeaders });
+        if (!query) {
+          return new Response(JSON.stringify({ error: "query requis" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
 
         const services = ["onlyfans", "fansly", "patreon", "subscribestar", "fanbox"];
         const results: any[] = [];
@@ -77,28 +82,57 @@ serve(async (req) => {
                 cover_url: `https://img.coomer.st/banners/${svc}/${query}`,
               });
             }
-          } catch (e: any) { console.log(e.message); }
+          } catch (e: any) {
+            console.error(`Search error for ${svc}:`, e.message);
+          }
         }
 
-        return new Response(JSON.stringify({ results, total: results.length }), { headers: corsHeaders });
+        return new Response(JSON.stringify({ results, total: results.length }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       case "import-creator": {
         const { service, creator_id, creator_name, skip_fetch } = body;
-        if (!service || !creator_id) return new Response("Params manquants", { status: 400 });
-
+        if (!service || !creator_id) {
+          return new Response(JSON.stringify({ error: "service et creator_id requis" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
         const modelName = creator_name || creator_id;
+        const profilePicUrl = `https://img.coomer.st/icons/${service}/${creator_id}`;
+        const coverUrl = `https://img.coomer.st/banners/${service}/${creator_id}`;
+
         let modelId: string | null = null;
-        const { data: existingModel } = await supabase.from("models").select("id").eq("user_id", user.id).ilike("name", modelName).maybeSingle();
+        const { data: existingModel } = await supabase
+          .from("models")
+          .select("id")
+          .eq("user_id", user.id)
+          .ilike("name", modelName)
+          .maybeSingle();
 
         if (existingModel) {
           modelId = existingModel.id;
+          await supabase
+            .from("models")
+            .update({ profile_image_url: profilePicUrl, source_platform: service })
+            .eq("id", modelId);
         } else {
-          const { data: created } = await supabase.from("models").insert({ user_id: user.id, name: modelName, source_platform: service }).select("id").single();
+          const { data: created } = await supabase
+            .from("models")
+            .insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: profilePicUrl })
+            .select("id")
+            .single();
           modelId = created?.id || null;
         }
 
-        if (skip_fetch) return new Response(JSON.stringify({ success: true, model_id: modelId }), { headers: corsHeaders });
+        if (skip_fetch) {
+          return new Response(
+            JSON.stringify({ success: true, model_id: modelId, model_name: modelName, cover_url: coverUrl, profile_pic_url: profilePicUrl }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         const allVideos: any[] = [];
         let offset = 0, hasMore = true, pages = 0;
@@ -107,16 +141,22 @@ serve(async (req) => {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, { headers: browserHeaders });
             if (!r.ok) break;
             const posts = await r.json();
-            if (!posts || posts.length === 0) break;
+            if (!posts || posts.length === 0) {
+              hasMore = false;
+              break;
+            }
             allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, creator_id)));
             offset += 50;
             pages++;
             if (posts.length < 50) hasMore = false;
-          } catch { break; }
+          } catch {
+            hasMore = false;
+          }
         }
 
         const CHUNK = 500;
-        let importedCount = 0;
+        let imported = 0, duplicates = 0, errors = 0;
+        let lastError = null;
         for (let i = 0; i < allVideos.length; i += CHUNK) {
           const rows = allVideos.slice(i, i + CHUNK).map((v: any) => ({
             user_id: user.id,
@@ -128,65 +168,122 @@ serve(async (req) => {
             metadata: v.metadata || {},
             model_id: modelId,
           }));
-          
-          // ON RECOUVRE L'ERREUR ICI POUR TE L'AFFICHER
           const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
             .select("id");
-            
           if (insErr) {
-            // SI SUPABASE REFUSE, ON AFFICHE POURQUOI DIRECTEMENT :
-            return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+            errors += rows.length;
+            lastError = insErr;
+          } else {
+            imported += ins?.length || 0;
+            duplicates += rows.length - (ins?.length || 0);
           }
-          
-          importedCount += ins?.length || 0;
         }
 
-        return new Response(JSON.stringify({ success: true, videos_found: allVideos.length, imported: importedCount }), { headers: corsHeaders });
+        if (lastError && imported === 0) {
+          return new Response(JSON.stringify({ error: "DB_ERROR", details: lastError }), { status: 500, headers: corsHeaders });
+        }
+
+        return new Response(
+          JSON.stringify({ success: true, videos_found: allVideos.length, imported, duplicates, errors }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
-      // Les autres méthodes restent les mêmes pour ne rien casser
       case "parse-profile": {
         const profileUrl = body.url;
+        const modelNameOverride = body.model_name;
+        if (!profileUrl) {
+          return new Response(JSON.stringify({ error: "URL requise" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         const match = profileUrl.match(/coomer\.(su|party|st)\/(\w+)\/user\/([^/?\s]+)/);
-        if (!match) return new Response("URL Invalide", { status: 400 });
+        if (!match) {
+          return new Response(JSON.stringify({ error: "URL de profil coomer invalide" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
 
         const [, , service, userId] = match;
+        const modelName = modelNameOverride || userId;
+        const profilePicUrl = `https://img.coomer.st/icons/${service}/${userId}`;
+
         const allVideos: any[] = [];
-        let offset = 0, hasMore = true;
+        let offset = 0;
+        let hasMore = true;
         while (hasMore) {
           try {
             const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, { headers: browserHeaders });
             if (!response.ok) break;
             const posts = await response.json();
-            if (!posts || posts.length === 0) break;
+            if (!posts || posts.length === 0) {
+              hasMore = false;
+              break;
+            }
             allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId)));
             offset += 50;
             if (posts.length < 50) hasMore = false;
-          } catch { break; }
+          } catch {
+            hasMore = false;
+          }
         }
 
-        const rows = allVideos.map((v: any) => ({
-          user_id: user.id,
-          source: "coomer",
-          title: v.title || "Vidéo",
-          original_url: v.url,
-          download_url: v.url,
-          metadata: v.metadata || {},
-        }));
+        let modelId: string | null = null;
+        const { data: existingModel } = await supabase.from("models").select("id").eq("user_id", user.id).ilike("name", modelName).maybeSingle();
 
-        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
-        if (insErr) {
-           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        if (existingModel) {
+          modelId = existingModel.id;
+        } else {
+          const { data: created } = await supabase.from("models").insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: profilePicUrl }).select("id").single();
+          modelId = created?.id || null;
         }
 
-        return new Response(JSON.stringify({ success: true, found: allVideos.length, imported: ins?.length || 0 }), { headers: corsHeaders });
+        const CHUNK_SIZE = 500;
+        let totalImported = 0, totalDupes = 0, totalErrors = 0;
+
+        for (let i = 0; i < allVideos.length; i += CHUNK_SIZE) {
+          const chunk = allVideos.slice(i, i + CHUNK_SIZE);
+          const rows = chunk.map((v: any) => ({
+            user_id: user.id,
+            source: "coomer",
+            title: v.title || "Vidéo",
+            original_url: v.url,
+            download_url: v.url,
+            thumbnail_url: v.thumbnail_url || null,
+            metadata: v.metadata || {},
+            model_id: modelId,
+          }));
+
+          const { data: imported, error: insertError } = await supabase
+            .from("imported_videos")
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .select("id");
+
+          if (insertError) {
+            totalErrors += chunk.length;
+          } else {
+            totalImported += imported?.length || 0;
+            totalDupes += chunk.length - (imported?.length || 0);
+          }
+        }
+
+        return new Response(JSON.stringify({ success: true, imported: totalImported, duplicates: totalDupes, errors: totalErrors }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       case "parse-url": {
         const coomerUrl = body.url;
-        if (!coomerUrl) return new Response("URL requise", { status: 400 });
+        if (!coomerUrl) {
+          return new Response(JSON.stringify({ error: "URL requise" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
         const urls = coomerUrl.split(/[\n\r]+/).map((u: string) => u.trim()).filter(Boolean);
         const allVideos: any[] = [];
 
@@ -196,75 +293,231 @@ serve(async (req) => {
             allVideos.push(...parsed.videos);
             continue;
           }
+
           const match = singleUrl.match(/coomer\.(su|party|st)\/(\w+)\/user\/([^/]+)(?:\/post\/([^/]+))?/);
           if (match) {
             const [, , service, userId, postId] = match;
-            const apiUrl = postId ? `${COOMER_API}/${service}/user/${userId}/post/${postId}` : `${COOMER_API}/${service}/user/${userId}?o=0`;
-            try {
-              const resp = await fetch(apiUrl, { headers: browserHeaders });
-              if (resp.ok) {
-                const data = await resp.json();
-                const posts = Array.isArray(data) ? data : [data];
+            if (postId) {
+              const response = await fetch(`${COOMER_API}/${service}/user/${userId}/post/${postId}`, { headers: browserHeaders });
+              if (response.ok) {
+                const post = await response.json();
+                allVideos.push(...extractVideos(post, service, userId));
+              }
+            } else {
+              const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=0`, { headers: browserHeaders });
+              if (response.ok) {
+                const posts = await response.json();
                 allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId)));
               }
-            } catch (e) { console.error(e); }
+            }
+            continue;
+          }
+
+          if (singleUrl.match(/\.(mp4|m4v|webm|mkv|avi|mov)/i)) {
+            const filename = singleUrl.split("/").pop()?.split("?")[0] || "Vidéo";
+            allVideos.push({
+              url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+              title: filename,
+              thumbnail_url: null,
+              model_name: null,
+              metadata: { source: "direct_url", original_url: singleUrl },
+            });
           }
         }
-        return new Response(JSON.stringify({ videos: allVideos }), { headers: corsHeaders });
+
+        return new Response(JSON.stringify({ videos: allVideos, total_urls: urls.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
+      // LA VRAIE FONCTION IMPORT-BATCH RESTAURÉE ET CORRIGÉE
       case "import-batch": {
         const { videos } = body;
-        const rows = videos.map((v: any) => ({
-          user_id: user.id,
-          source: v.source || "coomer",
-          title: v.title || "Vidéo",
-          original_url: v.url,
-          download_url: v.url,
-          metadata: v.metadata || {}
-        }));
-        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
-        if (insErr) {
-           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        if (!videos || !Array.isArray(videos) || videos.length === 0) {
+          return new Response(JSON.stringify({ error: "Liste de vidéos requise" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
-        return new Response(JSON.stringify({ success: true, imported: ins?.length || 0 }), { headers: corsHeaders });
+
+        const modelNames = [...new Set(videos.map((v: any) => v.model_name).filter(Boolean))] as string[];
+        const modelIdMap = new Map<string, string>();
+
+        if (modelNames.length > 0) {
+          const { data: existingModels } = await supabase
+            .from("models")
+            .select("id, name")
+            .eq("user_id", user.id)
+            .in("name", modelNames);
+
+          for (const m of existingModels || []) {
+            modelIdMap.set(m.name.toLowerCase(), m.id);
+          }
+
+          const missingNames = modelNames.filter((n) => !modelIdMap.has(n.toLowerCase()));
+          if (missingNames.length > 0) {
+            const newModels = await Promise.all(
+              missingNames.map(async (name) => {
+                const profilePic = `https://img.coomer.st/icons/onlyfans/${name}`;
+                return {
+                  user_id: user.id,
+                  name,
+                  source_platform: "coomer",
+                  profile_image_url: profilePic,
+                };
+              }),
+            );
+            const { data: created } = await supabase.from("models").insert(newModels).select("id, name");
+            for (const m of created || []) {
+              modelIdMap.set(m.name.toLowerCase(), m.id);
+            }
+          }
+        }
+
+        const CHUNK_SIZE = 500;
+        let totalImported = 0;
+        let totalDupes = 0;
+        let totalErrors = 0;
+        let lastDbError = null;
+
+        for (let i = 0; i < videos.length; i += CHUNK_SIZE) {
+          const chunk = videos.slice(i, i + CHUNK_SIZE);
+          const rows = chunk.map((v: any) => ({
+            user_id: user.id,
+            source: v.source || "coomer",
+            title: v.title || "Vidéo",
+            original_url: v.url,
+            download_url: v.url,
+            thumbnail_url: v.thumbnail_url || null,
+            metadata: v.metadata || {},
+            model_id: v.model_name ? modelIdMap.get(v.model_name.toLowerCase()) || null : null,
+          }));
+
+          const { data: imported, error: insertError } = await supabase
+            .from("imported_videos")
+            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .select("id");
+
+          if (insertError) {
+            console.error("Chunk insert error:", insertError);
+            totalErrors += chunk.length;
+            lastDbError = insertError;
+          } else {
+            totalImported += imported?.length || 0;
+            totalDupes += chunk.length - (imported?.length || 0);
+          }
+        }
+
+        if (lastDbError && totalImported === 0) {
+           return new Response(JSON.stringify({ error: "DB_ERROR", details: lastDbError }), { status: 500, headers: corsHeaders });
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            imported: totalImported,
+            duplicates: totalDupes,
+            errors: totalErrors,
+            models_created: modelNames.filter((n) => {
+              const existing = (body._existingModelNames || []) as string[];
+              return !existing.includes(n.toLowerCase());
+            }).length,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
 
       case "import-video": {
-        const { url: vUrl, title, model_id, metadata } = body;
-        const { data, error: insErr } = await supabase.from("imported_videos").upsert({
-          user_id: user.id,
-          source: "coomer",
-          title: title || "Vidéo",
-          original_url: vUrl,
-          download_url: vUrl,
-          metadata: metadata || {},
-          model_id,
-        }, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select().single();
-        if (insErr) {
-           return new Response(JSON.stringify({ error: "DB_ERROR", details: insErr }), { status: 500, headers: corsHeaders });
+        const { url: videoUrl, title, thumbnail_url, metadata, model_name } = body;
+        if (!videoUrl) {
+          return new Response(JSON.stringify({ error: "URL requise" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
-        return new Response(JSON.stringify({ success: true, video: data }), { headers: corsHeaders });
+
+        let model_id = null;
+        if (model_name) {
+          const { data: existing } = await supabase.from("models").select("id").eq("user_id", user.id).ilike("name", model_name).maybeSingle();
+          if (existing) {
+            model_id = existing.id;
+          } else {
+            const profilePic = `https://img.coomer.st/icons/onlyfans/${model_name}`;
+            const { data: created } = await supabase.from("models").insert({ user_id: user.id, name: model_name, source_platform: "coomer", profile_image_url: profilePic }).select("id").single();
+            model_id = created?.id || null;
+          }
+        }
+
+        const { data: imported, error: insertError } = await supabase
+          .from("imported_videos")
+          .upsert(
+            {
+              user_id: user.id,
+              source: "coomer",
+              title: title || "Vidéo Coomer",
+              original_url: videoUrl,
+              download_url: videoUrl,
+              thumbnail_url: thumbnail_url || null,
+              metadata: metadata || {},
+              model_id,
+            },
+            { onConflict: "user_id, title", ignoreDuplicates: true },
+          )
+          .select()
+          .single();
+
+        if (insertError) throw insertError;
+
+        return new Response(JSON.stringify({ success: true, video: imported }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       default:
-        return new Response("Action inconnue", { status: 400 });
+        return new Response(JSON.stringify({ error: "Action inconnue" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
     }
-  } catch (error: any) {
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: corsHeaders });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : "";
+    console.error("coomer-import FATAL:", message, stack);
+    return new Response(JSON.stringify({ error: message, stack }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
+
+function extractModelName(url: string): string | null {
+  const profileMatch = url.match(/coomer\.(su|party|st)\/\w+\/user\/([^/]+)/);
+  if (profileMatch) return profileMatch[2];
+  return null;
+}
 
 function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
   const directMatch = singleUrl.match(/coomer\.\w+\/data\/.*\.(mp4|m4v|webm|mkv|avi|mov)/i);
   if (directMatch) {
     const filename = singleUrl.split("/").pop()?.split("?")[0] || "Vidéo";
+    const fParam = (() => {
+      try {
+        return new URL(singleUrl).searchParams.get("f");
+      } catch {
+        return null;
+      }
+    })();
+    const modelName = extractModelName(singleUrl);
     return {
-      videos: [{
-        url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
-        title: filename,
-        metadata: { source: "coomer_direct", original_url: singleUrl },
-      }],
+      videos: [
+        {
+          url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+          title: fParam || filename,
+          thumbnail_url: null,
+          model_name: modelName,
+          metadata: { source: "coomer_direct", original_url: singleUrl },
+        },
+      ],
     };
   }
   return null;
@@ -274,25 +527,36 @@ function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
   const baseUrl = PROXY_BASE_URL;
 
-  const createEntry = (file: any) => {
-    if (file && isVideoFile(file.name || file.path)) {
-      videos.push({
-        url: `${baseUrl}${file.path}`,
-        title: post.title || file.name || "Vidéo",
-        thumbnail_url: file.path ? `${baseUrl}/thumbnail${file.path}` : null,
-        metadata: { service, user_id: userId, post_id: post.id },
-      });
-    }
-  };
+  if (post.file && isVideoFile(post.file.name || post.file.path)) {
+    videos.push({
+      url: `${baseUrl}${post.file.path}`,
+      title: post.title || post.file.name || "Vidéo",
+      thumbnail_url: post.file.path ? `${baseUrl}/thumbnail${post.file.path}` : null,
+      model_name: userId,
+      metadata: { service, user_id: userId, post_id: post.id, published: post.published },
+    });
+  }
 
-  if (post.file) createEntry(post.file);
-  if (post.attachments) post.attachments.forEach((att: any) => createEntry(att));
+  if (post.attachments) {
+    for (const att of post.attachments) {
+      if (isVideoFile(att.name || att.path)) {
+        videos.push({
+          url: `${baseUrl}${att.path}`,
+          title: att.name || post.title || "Vidéo",
+          thumbnail_url: null,
+          model_name: userId,
+          metadata: { service, user_id: userId, post_id: post.id, published: post.published },
+        });
+      }
+    }
+  }
 
   return videos;
 }
 
 function isVideoFile(filename: string): boolean {
   if (!filename) return false;
-  const ext = filename.split('?')[0].split(".").pop()?.toLowerCase();
-  return ["mp4", "webm", "mkv", "avi", "mov", "m4v"].includes(ext || "");
+  const cleanName = filename.split('?')[0];
+  const ext = cleanName.split(".").pop()?.toLowerCase();
+  return ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"].includes(ext || "");
 }
