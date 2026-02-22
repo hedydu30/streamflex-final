@@ -8,7 +8,7 @@ const corsHeaders = {
 };
 
 const COOMER_API = "https://coomer.st/api/v1";
-// 1. DEFINITION DU PROXY
+// 1. TON NOUVEAU PROXY
 const PROXY_BASE_URL = "https://streamflex-proxy.hedydu30.workers.dev";
 
 serve(async (req) => {
@@ -48,7 +48,7 @@ serve(async (req) => {
     const action = url.searchParams.get("action") || "parse-url";
     const body = req.method === "POST" ? await req.json() : {};
 
-    // 2. HEADERS POUR EVITER LE BLOCAGE COOMER
+    // 2. HEADERS ANTI-BLOCAGE
     const browserHeaders = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Accept": "application/json"
@@ -131,10 +131,10 @@ serve(async (req) => {
             model_id: modelId,
           }));
           
-          // 3. CORRECTION DU CONFLIT : On cible 'user_id, title' car c'est la contrainte qui a sauté
+          // 3. FIX DUPLICATA : On utilise original_url pour la synchronisation
           const { data: ins, error: insErr } = await supabase
             .from("imported_videos")
-            .upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true })
+            .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
             .select("id");
 
           if (insErr) {
@@ -173,7 +173,7 @@ serve(async (req) => {
           user_id: user.id, source: "coomer", title: v.title || "Vidéo", original_url: v.url, download_url: v.url, metadata: v.metadata || {},
         }));
 
-        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true }).select("id");
+        const { data: ins, error: insErr } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
 
         return new Response(JSON.stringify({ success: true, found: allVideos.length, imported: ins?.length || 0, error: insErr }), { headers: corsHeaders });
       }
@@ -210,7 +210,7 @@ serve(async (req) => {
         const rows = videos.map((v: any) => ({
           user_id: user.id, source: v.source || "coomer", title: v.title || "Vidéo", original_url: v.url, download_url: v.url, metadata: v.metadata || {}, model_id: v.model_id || null
         }));
-        const { data: ins, error } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id, title", ignoreDuplicates: true }).select("id");
+        const { data: ins, error } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
         return new Response(JSON.stringify({ success: !error, imported: ins?.length || 0, error }), { headers: corsHeaders });
       }
 
@@ -218,7 +218,7 @@ serve(async (req) => {
         const { url: vUrl, title, model_id, metadata } = body;
         const { data, error } = await supabase.from("imported_videos").upsert({
           user_id: user.id, source: "coomer", title: title || "Vidéo", original_url: vUrl, download_url: vUrl, metadata: metadata || {}, model_id
-        }, { onConflict: "user_id, title", ignoreDuplicates: true }).select().single();
+        }, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select().single();
         return new Response(JSON.stringify({ success: !error, video: data, error }), { headers: corsHeaders });
       }
 
@@ -247,7 +247,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
 
 function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
-  // 4. UTILISATION DU PROXY POUR LES VIDEOS
+  // 4. UTILISATION DU PROXY
   const baseUrl = PROXY_BASE_URL;
 
   const createEntry = (file: any) => {
