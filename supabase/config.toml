@@ -8,3 +8,5 @@ verify_jwt = false
 
 [functions.scan-durations]
 verify_jwt = false
+[functions.coomer-import]
+verify_jwt = false
