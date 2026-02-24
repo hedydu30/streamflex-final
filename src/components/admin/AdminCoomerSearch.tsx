@@ -30,7 +30,7 @@ import {
   Link2,
 } from "lucide-react";
 
-const PROXY = "https://still-disk-5cf6streamflex.hatem44655f.workers.dev";
+const PROXY = "https://streamflex-proxy.hedydu30.workers.dev";
 
 // ── Platform config ───────────────────────────────────────────
 const PLATFORM_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -353,8 +353,8 @@ const AdminCoomerSearch = () => {
         indexed: undefined,
         updated: undefined,
         profile_url: `https://coomer.st/${svc}/user/${userId}`,
-        profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`,
-        cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}`,
+        profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`,
+        cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}`,
       });
     } else {
       // Username sans URL → créer une entrée pour OnlyFans par défaut
@@ -368,8 +368,8 @@ const AdminCoomerSearch = () => {
           indexed: undefined,
           updated: undefined,
           profile_url: `https://coomer.st/${svc}/user/${q}`,
-          profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${q}`,
-          cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${q}`,
+          profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${q}`,
+          cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${q}`,
         });
       }
     }
@@ -438,7 +438,7 @@ const AdminCoomerSearch = () => {
         const inQueue = queue.some((i) => i.creator.service === svc && i.creator.id === userId);
         const inBatch = toAdd.some((c) => c.service === svc && c.id === userId);
         if (!inQueue && !inBatch) {
-          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}` });
+          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}` });
         }
       }
     }
@@ -457,7 +457,6 @@ const AdminCoomerSearch = () => {
   // ── Helpers : fetch coomer.st depuis le browser ─────────────
   const fetchCreatorVideos = useCallback(async (svc: string, creatorId: string, onProgress: (msg: string) => void) => {
     const BASE = "https://coomer.st";
-    const PROXY_BASE = "https://still-disk-5cf6streamflex.hatem44655f.workers.dev";
     const VIDEO_EXTS = ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"];
     const isVideo = (name: string) => {
       const ext = (name || "").split(".").pop()?.toLowerCase() || "";
@@ -471,7 +470,7 @@ const AdminCoomerSearch = () => {
 
     while (pages < 200) {
       const resp = await fetch(
-        `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/api/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
+        `https://streamflex-proxy.hedydu30.workers.dev/api/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
         {
           headers: { Accept: "application/json" },
           mode: "cors",
@@ -486,9 +485,9 @@ const AdminCoomerSearch = () => {
         // Fichier principal
         if (post.file?.path && isVideo(post.file.name || post.file.path)) {
           videos.push({
-            url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/data${post.file.path}`,
+            url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`,
             title: post.title || post.file.name || "Vidéo",
-            thumbnail_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/thumbnail${post.file.path}`,
+            thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`,
             metadata: { service: svc, post_id: post.id, published: post.published },
           });
         }
@@ -496,7 +495,7 @@ const AdminCoomerSearch = () => {
         for (const att of post.attachments || []) {
           if (att.path && isVideo(att.name || att.path)) {
             videos.push({
-              url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/data${att.path}`,
+              url: `https://streamflex-proxy.hedydu30.workers.dev/data${att.path}`,
               title: att.name || post.title || "Vidéo",
               thumbnail_url: null,
               metadata: { service: svc, post_id: post.id, published: post.published },
@@ -541,23 +540,39 @@ const AdminCoomerSearch = () => {
         const videos: any[] = [];
         let offset = 0, pages = 0;
 
+        // Fetch avec retry automatique sur 429
+        const fetchPage = async (url: string, retries = 3): Promise<any[]> => {
+          for (let attempt = 0; attempt < retries; attempt++) {
+            if (abortRef.current) return [];
+            const resp = await fetch(url, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" });
+            if (resp.status === 429) {
+              // Rate limited — attendre avant retry (2s, 4s, 8s)
+              const delay = 2000 * Math.pow(2, attempt);
+              console.warn(`[coomer] 429 rate limit, retry dans ${delay}ms...`);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); return []; }
+            const raw = await resp.text();
+            if (!raw || raw.trimStart().startsWith("<")) return [];
+            const data = JSON.parse(raw);
+            return Array.isArray(data) ? data : [];
+          }
+          return [];
+        };
+
         while (pages < 200) {
-          const resp = await fetch(
-            `${PROXY}/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
-            { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" }
-          );
-          if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); break; }
-          const rawText = await resp.text();
-          if (!rawText || rawText.trimStart().startsWith("<")) break;
-          const posts: any[] = JSON.parse(rawText);
-          if (!Array.isArray(posts) || posts.length === 0) break;
+          if (abortRef.current) break;
+          const url = `https://streamflex-proxy.hedydu30.workers.dev/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`;
+          const posts = await fetchPage(url);
+          if (!posts.length) break;
 
           for (const post of posts) {
             if (post.file?.path && isVideo(post.file.name || post.file.path)) {
               videos.push({
-                url: `${PROXY}/data${post.file.path}`,
+                url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`,
                 title: post.title || post.file.name || "Vidéo",
-                thumbnail_url: `${PROXY}/thumbnail${post.file.path}`,
+                thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`,
                 model_name: creatorName,
                 metadata: { service, post_id: post.id, published: post.published },
               });
@@ -565,7 +580,7 @@ const AdminCoomerSearch = () => {
             for (const att of post.attachments || []) {
               if (att.path && isVideo(att.name || att.path)) {
                 videos.push({
-                  url: `${PROXY}/data${att.path}`,
+                  url: `https://streamflex-proxy.hedydu30.workers.dev/data${att.path}`,
                   title: att.name || post.title || "Vidéo",
                   thumbnail_url: null,
                   model_name: creatorName,
@@ -581,6 +596,8 @@ const AdminCoomerSearch = () => {
           offset += 50;
           pages++;
           if (posts.length < 50) break;
+          // Pause 300ms entre chaque page pour éviter le 429
+          await new Promise(r => setTimeout(r, 300));
         }
 
         // ── Étape 2 : créer/mettre à jour le modèle avec photo de couverture ──
@@ -634,12 +651,12 @@ const AdminCoomerSearch = () => {
         );
       }
 
-      if (!abortRef.current) await new Promise((r) => setTimeout(r, 800));
+      if (!abortRef.current) await new Promise((r) => setTimeout(r, 3000));
     }
 
     setRunning(false);
     abortRef.current = false;
-  }, [running, queue, user, toast, queryClient, PROXY]);
+  }, [running, queue, user, toast, queryClient]);
 
   const stopQueue = useCallback(() => {
     abortRef.current = true;
