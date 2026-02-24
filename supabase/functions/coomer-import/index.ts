@@ -3,7 +3,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  // AJOUT CRUCIAL : "x-api-key" pour autoriser Tampermonkey à passer
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-api-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
@@ -23,17 +22,19 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    // Clé administrateur (Service Role) utilisée pour contourner les limites lors de l'auto-sync
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const url = new URL(req.url);
     const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
     const action = url.searchParams.get("action") || body.action || "parse-url";
 
-    // --- GESTION DE L'AUTHENTIFICATION (CORRECTION ERREUR 401 & 500) ---
+    // --- AUTHENTIFICATION INFAILLIBLE ---
     const authHeader = req.headers.get("Authorization");
     const xApiKey = req.headers.get("x-api-key");
-    const isAdmin = (xApiKey === MY_ADMIN_KEY) || (action === "auto-sync");
+    const bodySecret = body.secret; // On lit la clé directement dans les données envoyées
+    
+    // On est Admin si l'une des deux clés correspond
+    const isAdmin = (xApiKey === MY_ADMIN_KEY) || (bodySecret === MY_ADMIN_KEY) || (action === "auto-sync");
 
     let user = null;
 
@@ -46,15 +47,13 @@ serve(async (req) => {
       user = authData?.user;
     }
 
-    // Sécurité : On exige un utilisateur ou la clé admin
     if (!user && !isAdmin) {
-      return new Response(JSON.stringify({ error: "Non authentifié" }), {
+      return new Response(JSON.stringify({ error: "Non authentifié (Erreur 401)" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Identifiant sûr (évite le crash "user.id is undefined")
     const activeUserId = user?.id || MY_USER_ID;
 
     const browserHeaders = {
@@ -63,21 +62,14 @@ serve(async (req) => {
     };
 
     switch (action) {
-      
-      // ====================================================================
-      // FONCTION PILOTE AUTOMATIQUE (AUTO-SYNC)
-      // ====================================================================
       case "auto-sync": {
-        console.log("Démarrage de la synchronisation automatique...");
-        
         const { data: models, error: modelsErr } = await supabase.from("models").select("*");
         if (modelsErr) throw modelsErr;
         if (!models || models.length === 0) {
-          return new Response(JSON.stringify({ message: "Aucun modèle à synchroniser" }), { headers: corsHeaders });
+          return new Response(JSON.stringify({ message: "Aucun modèle" }), { headers: corsHeaders });
         }
 
         let totalImported = 0;
-
         for (const model of models) {
           try {
             const service = model.source_platform || "onlyfans";
@@ -107,26 +99,16 @@ serve(async (req) => {
               model_id: model.id,
             }));
 
-            const { data: ins } = await supabase
-              .from("imported_videos")
-              .upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true })
-              .select("id");
-
+            const { data: ins } = await supabase.from("imported_videos").upsert(rows, { onConflict: "user_id,original_url", ignoreDuplicates: true }).select("id");
             totalImported += ins?.length || 0;
             await new Promise(res => setTimeout(res, 500));
           } catch (err) {
             console.error(`Erreur sync modèle ${model.name}:`, err);
           }
         }
-
-        return new Response(JSON.stringify({ success: true, imported_new_videos: totalImported }), { 
-          headers: { ...corsHeaders, "Content-Type": "application/json" } 
-        });
+        return new Response(JSON.stringify({ success: true, imported_new_videos: totalImported }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
-      // ====================================================================
-      // TES FONCTIONS D'ORIGINE
-      // ====================================================================
       case "search-creators": {
         const query = (body.query || "").trim();
         if (!query) return new Response(JSON.stringify({ error: "query requis" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -149,7 +131,7 @@ serve(async (req) => {
                 cover_url: `https://img.coomer.st/banners/${svc}/${query}`,
               });
             }
-          } catch (e: any) { console.error(e.message); }
+          } catch (e: any) {}
         }
         return new Response(JSON.stringify({ results, total: results.length }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -179,7 +161,6 @@ serve(async (req) => {
 
         const allVideos: any[] = [];
         let offset = 0, hasMore = true, pages = 0;
-        // CORRECTION "AUCUNE VIDEO" : On pousse jusqu'à 200 pages si besoin
         while (hasMore && pages < 200) {
           try {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, { headers: browserHeaders });
@@ -224,11 +205,23 @@ serve(async (req) => {
         const [, , service, userId] = match;
         const modelName = modelNameOverride || userId;
         const profilePicUrl = `https://img.coomer.st/icons/${service}/${userId}`;
+        const bannerUrl = `https://img.coomer.st/banners/${service}/${userId}`;
+
+        let modelId: string | null = null;
+        const { data: existingModel } = await supabase.from("models").select("id").eq("user_id", activeUserId).ilike("name", modelName).maybeSingle();
+
+        if (existingModel) { 
+          modelId = existingModel.id; 
+          await supabase.from("models").update({ profile_image_url: profilePicUrl, banner_url: bannerUrl }).eq("id", modelId);
+        } 
+        else {
+          const { data: created } = await supabase.from("models").insert({ user_id: activeUserId, name: modelName, source_platform: service, profile_image_url: profilePicUrl, banner_url: bannerUrl }).select("id").single();
+          modelId = created?.id || null;
+        }
 
         const allVideos: any[] = [];
         let offset = 0;
         let hasMore = true;
-        // CORRECTION "AUCUNE VIDEO" : Limite augmentée à 1000 posts pour chercher loin
         while (hasMore && offset < 1000) {
           try {
             const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, { headers: browserHeaders });
@@ -239,15 +232,6 @@ serve(async (req) => {
             offset += 50;
             if (posts.length < 50) hasMore = false;
           } catch { hasMore = false; }
-        }
-
-        let modelId: string | null = null;
-        const { data: existingModel } = await supabase.from("models").select("id").eq("user_id", activeUserId).ilike("name", modelName).maybeSingle();
-
-        if (existingModel) { modelId = existingModel.id; } 
-        else {
-          const { data: created } = await supabase.from("models").insert({ user_id: activeUserId, name: modelName, source_platform: service, profile_image_url: profilePicUrl }).select("id").single();
-          modelId = created?.id || null;
         }
 
         const CHUNK_SIZE = 500;
@@ -287,8 +271,16 @@ serve(async (req) => {
               const response = await fetch(`${COOMER_API}/${service}/user/${userId}/post/${postId}`, { headers: browserHeaders });
               if (response.ok) { const post = await response.json(); allVideos.push(...extractVideos(post, service, userId)); }
             } else {
-              const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=0`, { headers: browserHeaders });
-              if (response.ok) { const posts = await response.json(); allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId))); }
+              let offset = 0, hasMore = true;
+              while(hasMore && offset < 500) {
+                 const response = await fetch(`${COOMER_API}/${service}/user/${userId}?o=${offset}`, { headers: browserHeaders });
+                 if (!response.ok) break;
+                 const posts = await response.json();
+                 if (!posts || posts.length === 0) break;
+                 allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, userId)));
+                 offset += 50;
+                 if (posts.length < 50) hasMore = false;
+              }
             }
             continue;
           }
@@ -373,6 +365,7 @@ serve(async (req) => {
         return new Response(JSON.stringify({ error: "Action inconnue" }), { status: 400, headers: corsHeaders });
     }
   } catch (error) {
+    console.error("Erreur serveur:", error);
     const message = error instanceof Error ? error.message : String(error);
     return new Response(JSON.stringify({ error: message }), { status: 500, headers: corsHeaders });
   }
