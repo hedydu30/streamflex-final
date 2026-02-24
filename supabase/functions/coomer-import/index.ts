@@ -140,8 +140,12 @@ serve(async (req) => {
         while (hasMore && pages < 200) {
           try {
             const fetchUrl = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`;
-            const r = await fetch(fetchUrl, { headers: browserHeaders });
-            console.log(`[coomer-import] fetch ${fetchUrl} → ${r.status}`);
+            console.log(`[coomer-import] fetching: ${fetchUrl}`);
+            const r = await fetch(fetchUrl, { 
+              headers: browserHeaders,
+              signal: AbortSignal.timeout(30000)
+            });
+            console.log(`[coomer-import] response: ${r.status} for ${fetchUrl}`);
             if (!r.ok) {
               fetchError = `HTTP ${r.status} pour ${fetchUrl}`;
               break;
@@ -158,7 +162,8 @@ serve(async (req) => {
             pages++;
             if (posts.length < 50) hasMore = false;
           } catch(e: any) {
-            fetchError = e.message || String(e);
+            fetchError = `Exception: ${e.message || String(e)}`;
+            console.error("[coomer-import] fetch exception:", fetchError);
             hasMore = false;
           }
         }
