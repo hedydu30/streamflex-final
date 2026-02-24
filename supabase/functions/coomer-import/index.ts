@@ -140,7 +140,9 @@ serve(async (req) => {
           try {
             const r = await fetch(`https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`, { headers: browserHeaders });
             if (!r.ok) break;
-            const posts = await r.json();
+            const rawText = await r.text();
+            if (!rawText || rawText.trimStart().startsWith("<")) break;
+            const posts = JSON.parse(rawText);
             if (!posts || posts.length === 0) {
               hasMore = false;
               break;

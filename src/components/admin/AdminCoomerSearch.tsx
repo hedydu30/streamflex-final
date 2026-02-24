@@ -27,7 +27,7 @@ import {
   RefreshCw,
   SkipForward,
   ShoppingCart,
-  Link,
+  Link2,
 } from "lucide-react";
 
 // ── Platform config ───────────────────────────────────────────
@@ -420,42 +420,31 @@ const AdminCoomerSearch = () => {
   }, []);
 
   const parseAndAddLinks = useCallback(async () => {
-    const lines = multiLinks.split(/[\n,]+/).map((l: string) => l.trim()).filter(Boolean);
+    const lines = multiLinks
+      .replace(/\r/g, "")
+      .split(/[\n,]+/)
+      .map((l: string) => l.trim())
+      .filter(Boolean);
     if (!lines.length) return;
     setAddingLinks(true);
-
     const toAdd: CoomerCreator[] = [];
     for (const line of lines) {
       const m = line.match(/coomer\.(st|su|party)\/(\w+)\/user\/([^/?\s]+)/i);
       if (m) {
         const svc = m[2].toLowerCase();
-        const userId = m[3];
+        const userId = m[3].trim();
         const inQueue = queue.some((i) => i.creator.service === svc && i.creator.id === userId);
         const inBatch = toAdd.some((c) => c.service === svc && c.id === userId);
         if (!inQueue && !inBatch) {
-          toAdd.push({
-            id: userId,
-            name: userId,
-            service: svc,
-            profile_url: `https://coomer.st/${svc}/user/${userId}`,
-            profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`,
-            cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}`,
-          });
+          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}` });
         }
       }
     }
-
     if (toAdd.length) {
-      setQueue((prev) => [
-        ...prev,
-        ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus })),
-      ]);
+      setQueue((prev) => [...prev, ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus }))]);
       setShowQueue(true);
-      const dupes = lines.filter((l: string) => /coomer/.test(l)).length - toAdd.length;
-      toast({
-        title: `${toAdd.length} créateur(s) ajouté(s) à la file`,
-        description: dupes > 0 ? `${dupes} doublon(s) ignoré(s)` : undefined,
-      });
+      const dupes = lines.filter((l: string) => /coomer/i.test(l)).length - toAdd.length;
+      toast({ title: `${toAdd.length} créateur(s) ajouté(s)`, description: dupes > 0 ? `${dupes} doublon(s) ignoré(s)` : undefined });
       setMultiLinks("");
     } else {
       toast({ title: "Aucun lien valide", description: "Format : https://coomer.st/onlyfans/user/xxx", variant: "destructive" });
@@ -480,7 +469,7 @@ const AdminCoomerSearch = () => {
 
     while (pages < 200) {
       const resp = await fetch(
-        `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
+        `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/api/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
         {
           headers: { Accept: "application/json" },
           mode: "cors",
@@ -531,10 +520,6 @@ const AdminCoomerSearch = () => {
 
     const pending = queue.filter((i) => i.status === "pending");
     for (const item of pending) {
-      // Pause de 2s entre chaque import pour éviter les timeouts Supabase
-      if (pending.indexOf(item) > 0) {
-        await new Promise(r => setTimeout(r, 2000));
-      }
       if (abortRef.current) break;
 
       setQueue((prev) =>
@@ -544,72 +529,22 @@ const AdminCoomerSearch = () => {
       try {
         const { service, id: creatorId, name: creatorName } = item.creator;
 
-        // ── Étape 1 : browser récupère les posts depuis coomer.st ──
-        let videosFound = 0;
-        const videos = await fetchCreatorVideos(service, creatorId, (msg) =>
-          setQueue((prev) =>
-            prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true, videos_found: videosFound } } : i)),
-          ),
-        );
-        videosFound = videos.length;
-
+        // ── Edge function : fetch posts + import (pas de CORS) ──
         setQueue((prev) =>
-          prev.map((i) =>
-            i.id === item.id ? { ...i, progress: { fetching: false, videos_found: videos.length } } : i,
-          ),
+          prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true } } : i)),
         );
 
-        if (videos.length === 0) {
-          setQueue((prev) =>
-            prev.map((i) =>
-              i.id === item.id
-                ? {
-                    ...i,
-                    status: "done",
-                    progress: { fetching: false, videos_found: 0, imported: 0, duplicates: 0, errors: 0 },
-                  }
-                : i,
-            ),
-          );
-          toast({ title: `ℹ️ ${creatorName}`, description: "Aucune vidéo trouvée sur ce profil." });
-          continue;
-        }
-
-        // ── Étape 2 : edge function insère en base (par chunks de 500) ──
-        let imported = 0,
-          duplicates = 0,
-          errors = 0;
-        const CHUNK = 500;
-        for (let i = 0; i < videos.length; i += CHUNK) {
-          if (abortRef.current) break;
-          const chunk = videos.slice(i, i + CHUNK);
-          const { data, error } = await supabase.functions.invoke("coomer-import?action=import-batch", {
-            body: {
-              videos: chunk.map((v) => ({ ...v, model_name: creatorName, source: "coomer" })),
-              creator_service: service,
-              creator_id: creatorId,
-              creator_name: creatorName,
-            },
-          });
-          if (error) {
-            errors += chunk.length;
-            continue;
-          }
-          imported += data?.imported || 0;
-          duplicates += data?.duplicates || 0;
-          errors += data?.errors || 0;
-        }
-
-        // ── Étape 3 : mettre à jour/créer le modèle ──
-        await supabase.functions.invoke("coomer-import?action=import-creator", {
-          body: {
-            service,
-            creator_id: creatorId,
-            creator_name: creatorName,
-            skip_fetch: true,
-            cover_as_profile: true,
-          },
+        const { data, error: invErr } = await supabase.functions.invoke("coomer-import?action=import-creator", {
+          body: { service, creator_id: creatorId, creator_name: creatorName, cover_as_profile: true },
         });
+
+        if (invErr) throw new Error(invErr.message || "Erreur edge function");
+        if (!data) throw new Error("Réponse vide");
+
+        const imported = data.imported || 0;
+        const duplicates = data.duplicates || 0;
+        const errors = data.errors || 0;
+        const videosFound = data.videos_found || (imported + duplicates);
 
         setQueue((prev) =>
           prev.map((i) =>
@@ -617,7 +552,7 @@ const AdminCoomerSearch = () => {
               ? {
                   ...i,
                   status: "done",
-                  progress: { fetching: false, videos_found: videos.length, imported, duplicates, errors },
+                  progress: { fetching: false, videos_found: videosFound, imported, duplicates, errors },
                 }
               : i,
           ),
@@ -625,7 +560,7 @@ const AdminCoomerSearch = () => {
 
         toast({
           title: `✅ ${creatorName} importé`,
-          description: `${imported} vidéo(s) · ${duplicates} doublon(s)`,
+          description: `${imported} nouvelle(s) · ${duplicates} doublon(s)${errors > 0 ? ` · ${errors} erreur(s)` : ''}`,
         });
 
         queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -641,7 +576,7 @@ const AdminCoomerSearch = () => {
 
     setRunning(false);
     abortRef.current = false;
-  }, [running, queue, user, toast, queryClient, fetchCreatorVideos]);
+  }, [running, queue, user, toast, queryClient]);
 
   const stopQueue = useCallback(() => {
     abortRef.current = true;
@@ -680,48 +615,37 @@ const AdminCoomerSearch = () => {
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && search()}
-                  placeholder="URL ou username (ex: annapolinaxxxx)"
+                  placeholder="URL ou username coomer.st"
                   className="pl-9 pr-8 h-10"
                   autoFocus
                 />
-                {query && (
-                  <button
-                    onClick={() => { setQuery(""); setResults([]); setHasSearched(false); setSearchError(null); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                    title="Effacer"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
               </div>
+              {query && (
+                <button onClick={() => { setQuery(""); setResults([]); setHasSearched(false); setSearchError(null); }} className="absolute right-[116px] top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Effacer"><X size={14} /></button>
+              )}
               <Button onClick={search} disabled={searching || query.trim().length < 2} className="h-10 px-5 gap-2">
                 {searching ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                 {searching ? "Recherche…" : "Rechercher"}
               </Button>
             </div>
 
-            {/* Multi-links paste zone */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Link size={13} className="text-muted-foreground" />
-                <span className="text-xs text-muted-foreground font-medium">Coller plusieurs liens (un par ligne)</span>
+            {/* Zone multi-liens */}
+            <div className="space-y-2 pt-1 border-t border-border/50">
+              <div className="flex items-center gap-1.5">
+                <Link2 size={12} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Coller plusieurs liens coomer.st (un par ligne)</span>
               </div>
               <Textarea
                 value={multiLinks}
                 onChange={(e) => setMultiLinks(e.target.value)}
-                placeholder={"https://coomer.st/onlyfans/user/xxx\nhttps://coomer.st/fansly/user/yyy\n..."}
-                className="text-xs min-h-[80px] resize-none font-mono"
+                placeholder={"https://coomer.st/onlyfans/user/xxx\nhttps://coomer.st/fansly/user/yyy"}
+                className="text-xs min-h-[72px] resize-none font-mono"
                 rows={3}
               />
               {multiLinks.trim() && (
-                <Button
-                  size="sm"
-                  onClick={parseAndAddLinks}
-                  disabled={addingLinks}
-                  className="w-full gap-2 h-8"
-                >
+                <Button size="sm" onClick={parseAndAddLinks} disabled={addingLinks} className="w-full gap-2 h-8">
                   {addingLinks ? <Loader2 size={13} className="animate-spin" /> : <ShoppingCart size={13} />}
-                  Ajouter à la file ({multiLinks.split(/[\n,]+/).filter(l => l.trim().includes("coomer")).length} lien(s))
+                  Ajouter à la file ({multiLinks.replace(/\r/g,"").split(/[\n,]+/).filter((l: string) => /coomer/i.test(l)).length} lien(s))
                 </Button>
               )}
             </div>
