@@ -3,8 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  // Ajout de x-api-key pour laisser passer le script navigateur
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-api-key",
 };
 
 const COOMER_API = "https://coomer.st/api/v1";
@@ -19,33 +20,48 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Non authentifié" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const userClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const {
-      data: { user },
-      error: userError,
-    } = await userClient.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Non authentifié" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
+    // 1. On lit les paramètres en premier pour trouver la clé
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "parse-url";
-    const body = req.method === "POST" ? await req.json() : {};
+    let body: any = {};
+    if (req.method === "POST") {
+      try { body = await req.json(); } catch (e) { body = {}; }
+    }
 
+    // 2. CORRECTION DU CRASH : La variable "user" est disponible pour tout le code
+    const authHeader = req.headers.get("Authorization");
+    const xApiKey = req.headers.get("x-api-key");
+    let user: any = null;
+
+    if (xApiKey === "streamflex_admin_secret_2024" || body.secret === "streamflex_admin_secret_2024") {
+      // Si c'est Tampermonkey, on lui donne tes droits d'administrateur
+      user = { id: "62e6f5bb-57f5-47e7-a757-d5d5bd78da4f" };
+    } else {
+      // TON CODE D'ORIGINE POUR TON SITE WEB
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Non authentifié" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+      const userClient = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const authResult = await userClient.auth.getUser();
+      
+      if (authResult.error || !authResult.data.user) {
+        return new Response(JSON.stringify({ error: "Non authentifié" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      // On valide l'utilisateur de ton site web
+      user = authResult.data.user;
+    }
+
+    // --- À PARTIR D'ICI, C'EST 100% TON CODE UPLOADÉ ---
     switch (action) {
       case "search-creators": {
         const query = (body.query || "").trim();
