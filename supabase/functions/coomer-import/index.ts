@@ -136,25 +136,33 @@ serve(async (req) => {
 
         const allVideos: any[] = [];
         let offset = 0, hasMore = true, pages = 0;
+        let fetchError = null;
         while (hasMore && pages < 200) {
           try {
-            const r = await fetch(`https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`, { headers: browserHeaders });
-            if (!r.ok) break;
-            const rawText = await r.text();
-            if (!rawText || rawText.trimStart().startsWith("<")) break;
-            const posts = JSON.parse(rawText);
-            if (!posts || posts.length === 0) {
-              hasMore = false;
+            const fetchUrl = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`;
+            const r = await fetch(fetchUrl, { headers: browserHeaders });
+            console.log(`[coomer-import] fetch ${fetchUrl} → ${r.status}`);
+            if (!r.ok) {
+              fetchError = `HTTP ${r.status} pour ${fetchUrl}`;
               break;
             }
+            const rawText = await r.text();
+            if (!rawText || rawText.trimStart().startsWith("<")) {
+              fetchError = `HTML reçu à offset ${offset}`;
+              break;
+            }
+            const posts = JSON.parse(rawText);
+            if (!posts || posts.length === 0) { hasMore = false; break; }
             allVideos.push(...posts.flatMap((p: any) => extractVideos(p, service, creator_id)));
             offset += 50;
             pages++;
             if (posts.length < 50) hasMore = false;
-          } catch {
+          } catch(e: any) {
+            fetchError = e.message || String(e);
             hasMore = false;
           }
         }
+        console.log(`[coomer-import] allVideos=${allVideos.length} pages=${pages} fetchError=${fetchError}`);
 
         const CHUNK = 500;
         let imported = 0, duplicates = 0, errors = 0;
@@ -191,7 +199,7 @@ serve(async (req) => {
         }
 
         return new Response(
-          JSON.stringify({ success: true, videos_found: allVideos.length, imported, duplicates, errors }),
+          JSON.stringify({ success: true, videos_found: allVideos.length, imported, duplicates, errors, fetch_error: fetchError, pages }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }

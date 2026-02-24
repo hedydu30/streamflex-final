@@ -541,10 +541,19 @@ const AdminCoomerSearch = () => {
         if (invErr) throw new Error(invErr.message || "Erreur edge function");
         if (!data) throw new Error("Réponse vide");
 
+        // Debug : afficher fetch_error si coomer.st a bloqué
+        if (data.fetch_error) {
+          console.warn("[coomer] fetch_error:", data.fetch_error, "pages:", data.pages);
+        }
+
         const imported = data.imported || 0;
         const duplicates = data.duplicates || 0;
         const errors = data.errors || 0;
         const videosFound = data.videos_found || (imported + duplicates);
+        
+        if (videosFound === 0 && data.fetch_error) {
+          throw new Error(`Fetch bloqué : ${data.fetch_error}`);
+        }
 
         setQueue((prev) =>
           prev.map((i) =>
