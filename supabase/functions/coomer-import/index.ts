@@ -3,16 +3,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  // AJOUT : x-api-key pour laisser passer Tampermonkey
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version, x-api-key",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const COOMER_API = "https://coomer.st/api/v1";
-// AJOUT : Ton Proxy pour la lecture
-const PROXY_BASE_URL = "https://streamflex-proxy.hedydu30.workers.dev";
-const MY_USER_ID = "62e6f5bb-57f5-47e7-a757-d5d5bd78da4f";
-const MY_ADMIN_KEY = "streamflex_admin_secret_2024";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -24,58 +19,33 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Non authentifié" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const {
+      data: { user },
+      error: userError,
+    } = await userClient.auth.getUser();
+    if (userError || !user) {
+      return new Response(JSON.stringify({ error: "Non authentifié" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || "parse-url";
-    
-    // Lecture sécurisée du body pour éviter le crash 500
-    let body: any = {};
-    if (req.method === "POST") {
-      try {
-        const text = await req.text();
-        if (text) body = JSON.parse(text);
-      } catch (e) {
-        body = {};
-      }
-    }
+    const body = req.method === "POST" ? await req.json() : {};
 
-    // --- AUTHENTIFICATION HYBRIDE ---
-    const authHeader = req.headers.get("Authorization");
-    const xApiKey = req.headers.get("x-api-key");
-    const bodySecret = body.secret;
-
-    let user: any = null;
-
-    if (xApiKey === MY_ADMIN_KEY || bodySecret === MY_ADMIN_KEY) {
-      // C'est Tampermonkey : on lui donne ton ID
-      user = { id: MY_USER_ID };
-    } else {
-      // C'est TON site web : on utilise TON code d'origine
-      if (!authHeader) {
-        return new Response(JSON.stringify({ error: "Non authentifié" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-      const userClient = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const {
-        data: { user: authUser },
-        error: userError,
-      } = await userClient.auth.getUser();
-      
-      if (userError || !authUser) {
-        return new Response(JSON.stringify({ error: "Non authentifié" }), {
-          status: 401,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      user = authUser;
-    }
-
-    // --- TON CODE D'ORIGINE INTACT ---
     switch (action) {
       case "search-creators": {
         const query = (body.query || "").trim();
@@ -133,6 +103,7 @@ serve(async (req) => {
         const profilePicUrl = `https://img.coomer.st/icons/${service}/${creator_id}`;
         const coverUrl = `https://img.coomer.st/banners/${service}/${creator_id}`;
 
+        // Upsert model
         let modelId: string | null = null;
         const { data: existingModel } = await supabase
           .from("models")
@@ -159,6 +130,8 @@ serve(async (req) => {
           modelId = created?.id || null;
         }
 
+        // Si skip_fetch=true, le browser a déjà envoyé les vidéos via import-batch
+        // On retourne juste le model_id sans refetcher coomer.st
         if (skip_fetch) {
           return new Response(
             JSON.stringify({
@@ -176,6 +149,7 @@ serve(async (req) => {
           );
         }
 
+        // Sinon fetch depuis coomer.st (cas legacy)
         const allVideos: any[] = [];
         let offset = 0,
           hasMore = true,
@@ -244,6 +218,7 @@ serve(async (req) => {
       }
 
       case "parse-profile": {
+        // Full profile import: fetch videos + profile pic + cover
         const profileUrl = body.url;
         const modelNameOverride = body.model_name;
         if (!profileUrl) {
@@ -264,9 +239,11 @@ serve(async (req) => {
         const [, , service, userId] = match;
         const modelName = modelNameOverride || userId;
 
+        // Fetch profile info (avatar + banner)
         const profilePicUrl = `https://img.coomer.st/icons/${service}/${userId}`;
         const bannerUrl = `https://img.coomer.st/banners/${service}/${userId}`;
 
+        // Fetch all posts with pagination
         const allVideos: any[] = [];
         let offset = 0;
         let hasMore = true;
@@ -287,6 +264,7 @@ serve(async (req) => {
           }
         }
 
+        // Check/create model
         let modelId: string | null = null;
         const { data: existingModel } = await supabase
           .from("models")
@@ -297,6 +275,7 @@ serve(async (req) => {
 
         if (existingModel) {
           modelId = existingModel.id;
+          // Only update images if not already set
           const updates: any = {};
           if (!existingModel.profile_image_url) {
             updates.profile_image_url = profilePicUrl;
@@ -318,6 +297,7 @@ serve(async (req) => {
           modelId = created?.id || null;
         }
 
+        // Import videos in chunks
         const CHUNK_SIZE = 500;
         let totalImported = 0;
         let totalDupes = 0;
@@ -411,7 +391,7 @@ serve(async (req) => {
           if (singleUrl.match(/\.(mp4|m4v|webm|mkv|avi|mov)/i)) {
             const filename = singleUrl.split("/").pop()?.split("?")[0] || "Vidéo";
             allVideos.push({
-              url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+              url: singleUrl,
               title: filename,
               thumbnail_url: null,
               model_name: null,
@@ -451,6 +431,7 @@ serve(async (req) => {
 
           const missingNames = modelNames.filter((n) => !modelIdMap.has(n.toLowerCase()));
           if (missingNames.length > 0) {
+            // Try to fetch profile pics for new models
             const newModels = await Promise.all(
               missingNames.map(async (name) => {
                 const profilePic = `https://img.coomer.st/icons/onlyfans/${name}`;
@@ -611,7 +592,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
     return {
       videos: [
         {
-          url: singleUrl.replace(/https:\/\/coomer\.(st|su|party)/, PROXY_BASE_URL),
+          url: singleUrl,
           title: fParam || filename,
           thumbnail_url: null,
           model_name: modelName,
@@ -625,8 +606,7 @@ function parseCoomerUrl(singleUrl: string): { videos: any[] } | null {
 
 function extractVideos(post: any, service: string, userId: string) {
   const videos: any[] = [];
-  // Le proxy est injecté ici pour lire les vidéos
-  const baseUrl = PROXY_BASE_URL;
+  const baseUrl = "https://coomer.st";
 
   if (post.file && isVideoFile(post.file.name || post.file.path)) {
     videos.push({
