@@ -30,6 +30,8 @@ import {
   Link2,
 } from "lucide-react";
 
+const PROXY = "https://still-disk-5cf6streamflex.hatem44655f.workers.dev";
+
 // ── Platform config ───────────────────────────────────────────
 const PLATFORM_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   onlyfans: { label: "OnlyFans", color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
@@ -529,31 +531,83 @@ const AdminCoomerSearch = () => {
       try {
         const { service, id: creatorId, name: creatorName } = item.creator;
 
-        // ── Edge function : fetch posts + import (pas de CORS) ──
+        // ── Étape 1 : browser fetch les posts depuis coomer.st via proxy ──
         setQueue((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true } } : i)),
         );
 
-        const { data, error: invErr } = await supabase.functions.invoke("coomer-import?action=import-creator", {
-          body: { service, creator_id: creatorId, creator_name: creatorName, cover_as_profile: true },
+        const VIDEO_EXTS = ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"];
+        const isVideo = (name: string) => VIDEO_EXTS.includes((name || "").split(".").pop()?.toLowerCase() || "");
+        const videos: any[] = [];
+        let offset = 0, pages = 0;
+
+        while (pages < 200) {
+          const resp = await fetch(
+            `${PROXY}/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
+            { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" }
+          );
+          if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); break; }
+          const rawText = await resp.text();
+          if (!rawText || rawText.trimStart().startsWith("<")) break;
+          const posts: any[] = JSON.parse(rawText);
+          if (!Array.isArray(posts) || posts.length === 0) break;
+
+          for (const post of posts) {
+            if (post.file?.path && isVideo(post.file.name || post.file.path)) {
+              videos.push({
+                url: `${PROXY}/data${post.file.path}`,
+                title: post.title || post.file.name || "Vidéo",
+                thumbnail_url: `${PROXY}/thumbnail${post.file.path}`,
+                model_name: creatorName,
+                metadata: { service, post_id: post.id, published: post.published },
+              });
+            }
+            for (const att of post.attachments || []) {
+              if (att.path && isVideo(att.name || att.path)) {
+                videos.push({
+                  url: `${PROXY}/data${att.path}`,
+                  title: att.name || post.title || "Vidéo",
+                  thumbnail_url: null,
+                  model_name: creatorName,
+                  metadata: { service, post_id: post.id, published: post.published },
+                });
+              }
+            }
+          }
+
+          setQueue((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true, videos_found: videos.length } } : i)),
+          );
+          offset += 50;
+          pages++;
+          if (posts.length < 50) break;
+        }
+
+        // ── Étape 2 : créer/mettre à jour le modèle avec photo de couverture ──
+        await supabase.functions.invoke("coomer-import?action=import-creator", {
+          body: { service, creator_id: creatorId, creator_name: creatorName, skip_fetch: true, cover_as_profile: true },
         });
 
-        if (invErr) throw new Error(invErr.message || "Erreur edge function");
-        if (!data) throw new Error("Réponse vide");
+        // ── Étape 3 : insérer les vidéos par chunks via import-batch ──
+        setQueue((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: false, videos_found: videos.length } } : i)),
+        );
 
-        // Debug : afficher fetch_error si coomer.st a bloqué
-        if (data.fetch_error) {
-          console.warn("[coomer] fetch_error:", data.fetch_error, "pages:", data.pages);
+        let imported = 0, duplicates = 0, errors = 0;
+        const CHUNK = 500;
+        for (let ci = 0; ci < videos.length; ci += CHUNK) {
+          if (abortRef.current) break;
+          const chunk = videos.slice(ci, ci + CHUNK);
+          const { data: batchData, error: batchErr } = await supabase.functions.invoke("coomer-import?action=import-batch", {
+            body: { videos: chunk },
+          });
+          if (batchErr) { errors += chunk.length; continue; }
+          imported += batchData?.imported || 0;
+          duplicates += batchData?.duplicates || 0;
+          errors += batchData?.errors || 0;
         }
 
-        const imported = data.imported || 0;
-        const duplicates = data.duplicates || 0;
-        const errors = data.errors || 0;
-        const videosFound = data.videos_found || (imported + duplicates);
-        
-        if (videosFound === 0 && data.fetch_error) {
-          throw new Error(`Fetch bloqué : ${data.fetch_error}`);
-        }
+        const videosFound = videos.length;
 
         setQueue((prev) =>
           prev.map((i) =>
@@ -585,7 +639,7 @@ const AdminCoomerSearch = () => {
 
     setRunning(false);
     abortRef.current = false;
-  }, [running, queue, user, toast, queryClient]);
+  }, [running, queue, user, toast, queryClient, PROXY]);
 
   const stopQueue = useCallback(() => {
     abortRef.current = true;
