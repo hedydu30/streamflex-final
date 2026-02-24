@@ -6,7 +6,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   Search,
@@ -18,12 +17,17 @@ import {
   Clock,
   Play,
   User,
+  ImageIcon,
   Film,
   ExternalLink,
   Plus,
+  ChevronDown,
+  ChevronUp,
   Trash2,
   RefreshCw,
-  Link
+  SkipForward,
+  ShoppingCart,
+  Link,
 } from "lucide-react";
 
 // ── Platform config ───────────────────────────────────────────
@@ -31,427 +35,856 @@ const PLATFORM_CONFIG: Record<string, { label: string; color: string; bg: string
   onlyfans: { label: "OnlyFans", color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
   fansly: { label: "Fansly", color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/30" },
   patreon: { label: "Patreon", color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/30" },
-  subscribestar: { label: "SubscribeStar", color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
+  subscribestar: { label: "SubscribeStar", color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
   fanbox: { label: "Fanbox", color: "text-pink-400", bg: "bg-pink-500/10 border-pink-500/30" },
+  gumroad: { label: "Gumroad", color: "text-rose-400", bg: "bg-rose-500/10 border-rose-500/30" },
+  discord: { label: "Discord", color: "text-indigo-400", bg: "bg-indigo-500/10 border-indigo-500/30" },
 };
 
-interface ImportJob {
+function getPlatform(service: string) {
+  return (
+    PLATFORM_CONFIG[service?.toLowerCase()] || {
+      label: service || "Unknown",
+      color: "text-muted-foreground",
+      bg: "bg-muted border-border",
+    }
+  );
+}
+
+// ── Types ─────────────────────────────────────────────────────
+interface CoomerCreator {
   id: string;
   name: string;
   service: string;
-  status: "pending" | "running" | "done" | "error";
-  found?: number;
-  imported?: number;
-  error?: string;
-  progress?: number;
+  profile_url: string;
+  profile_pic_url: string;
+  cover_url: string;
+  indexed?: string;
+  updated?: string;
 }
 
+type QueueStatus = "pending" | "running" | "done" | "error" | "skipped";
+
+interface QueueItem {
+  id: string; // internal UUID
+  creator: CoomerCreator;
+  status: QueueStatus;
+  progress?: { fetching: boolean; videos_found?: number; imported?: number; duplicates?: number; errors?: number };
+  error?: string;
+}
+
+// ── Creator result card ───────────────────────────────────────
+const CreatorCard = ({
+  creator,
+  queued,
+  onAdd,
+}: {
+  creator: CoomerCreator;
+  queued: boolean;
+  onAdd: (c: CoomerCreator) => void;
+}) => {
+  const [imgErr, setImgErr] = useState(false);
+  const [coverErr, setCoverErr] = useState(false);
+  const platform = getPlatform(creator.service);
+
+  return (
+    <div
+      className={cn(
+        "relative rounded-xl border overflow-hidden transition-all duration-200 group",
+        queued ? "border-primary/40 bg-primary/5" : "border-border bg-card hover:border-border/80 hover:bg-accent/30",
+      )}
+    >
+      {/* Cover banner */}
+      <div className="h-20 bg-gradient-to-br from-muted/60 to-muted/30 overflow-hidden relative">
+        {!coverErr ? (
+          <img
+            src={creator.cover_url}
+            alt=""
+            className="w-full h-full object-cover opacity-60"
+            onError={() => setCoverErr(true)}
+          />
+        ) : (
+          <div className="w-full h-full bg-gradient-to-br from-primary/10 to-primary/5" />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-card/80 to-transparent" />
+
+        {/* Platform badge */}
+        <div
+          className={cn(
+            "absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5 rounded-full border",
+            platform.bg,
+            platform.color,
+          )}
+        >
+          {platform.label}
+        </div>
+      </div>
+
+      {/* Avatar + info */}
+      <div className="px-3 pb-3">
+        <div className="flex items-end gap-3 -mt-7 mb-2">
+          <div className="w-14 h-14 rounded-xl border-2 border-card bg-muted overflow-hidden shadow-lg shrink-0">
+            {!imgErr ? (
+              <img
+                src={creator.profile_pic_url}
+                alt={creator.name}
+                className="w-full h-full object-cover"
+                onError={() => setImgErr(true)}
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-lg font-bold text-muted-foreground">
+                {(creator.name || "?")[0].toUpperCase()}
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 pb-1">
+            <p className="font-semibold text-foreground text-sm truncate">{creator.name}</p>
+            <p className="text-xs text-muted-foreground font-mono truncate">{creator.id}</p>
+          </div>
+        </div>
+
+        {/* Last update */}
+        {creator.updated && (
+          <p className="text-[10px] text-muted-foreground/60 mb-2">
+            Mis à jour {new Date(creator.updated).toLocaleDateString("fr-FR")}
+          </p>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            className={cn(
+              "flex-1 h-7 text-xs gap-1.5",
+              queued && "bg-primary/20 text-primary border border-primary/40",
+            )}
+            variant={queued ? "outline" : "default"}
+            onClick={() => !queued && onAdd(creator)}
+            disabled={queued}
+          >
+            {queued ? (
+              <>
+                <CheckCircle2 size={11} /> Dans la file
+              </>
+            ) : (
+              <>
+                <Plus size={11} /> Ajouter
+              </>
+            )}
+          </Button>
+          <a
+            href={creator.profile_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="h-7 w-7 flex items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            <ExternalLink size={11} />
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Queue item row ────────────────────────────────────────────
+const QueueRow = ({
+  item,
+  onRemove,
+  onSkip,
+  onRetry,
+}: {
+  item: QueueItem;
+  onRemove: (id: string) => void;
+  onSkip: (id: string) => void;
+  onRetry: (id: string) => void;
+}) => {
+  const platform = getPlatform(item.creator.service);
+  const [imgErr, setImgErr] = useState(false);
+
+  const statusConfig = {
+    pending: { icon: Clock, color: "text-muted-foreground", label: "En attente" },
+    running: { icon: Loader2, color: "text-primary animate-spin", label: "Import…" },
+    done: { icon: CheckCircle2, color: "text-green-400", label: "Terminé" },
+    error: { icon: AlertTriangle, color: "text-destructive", label: "Erreur" },
+    skipped: { icon: SkipForward, color: "text-muted-foreground", label: "Ignoré" },
+  }[item.status];
+
+  const StatusIcon = statusConfig.icon;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors",
+        item.status === "running"
+          ? "border-primary/30 bg-primary/5"
+          : item.status === "done"
+            ? "border-green-500/20 bg-green-500/5"
+            : item.status === "error"
+              ? "border-destructive/20 bg-destructive/5"
+              : item.status === "skipped"
+                ? "border-border/40 opacity-50"
+                : "border-border bg-card",
+      )}
+    >
+      {/* Avatar */}
+      <div className="w-9 h-9 rounded-lg bg-muted overflow-hidden shrink-0">
+        {!imgErr ? (
+          <img
+            src={item.creator.profile_pic_url}
+            alt=""
+            className="w-full h-full object-cover"
+            onError={() => setImgErr(true)}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-sm font-bold text-muted-foreground">
+            {(item.creator.name || "?")[0].toUpperCase()}
+          </div>
+        )}
+      </div>
+
+      {/* Name + platform */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-sm font-medium text-foreground truncate">{item.creator.name}</span>
+          <span
+            className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-full border", platform.bg, platform.color)}
+          >
+            {platform.label}
+          </span>
+        </div>
+        {/* Progress / error */}
+        {item.status === "running" && item.progress && (
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {item.progress.fetching
+              ? "Récupération des posts…"
+              : item.progress.videos_found !== undefined
+                ? `${item.progress.videos_found} vidéo(s) trouvée(s)…`
+                : "Insertion en base…"}
+          </p>
+        )}
+        {item.status === "done" && item.progress && (
+          <p className="text-xs text-green-400 mt-0.5">
+            ✓ {item.progress.imported}/{(item.progress.imported ?? 0) + (item.progress.duplicates ?? 0)} importée(s)
+            {item.progress.duplicates ? ` · ${item.progress.duplicates} doublon(s)` : ""}
+          </p>
+        )}
+        {item.status === "error" && <p className="text-xs text-destructive mt-0.5 truncate">{item.error}</p>}
+      </div>
+
+      {/* Status icon */}
+      <StatusIcon size={15} className={statusConfig.color} />
+
+      {/* Actions */}
+      {item.status === "pending" && (
+        <div className="flex gap-1">
+          <button
+            onClick={() => onSkip(item.id)}
+            className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            title="Ignorer"
+          >
+            <SkipForward size={13} />
+          </button>
+          <button
+            onClick={() => onRemove(item.id)}
+            className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+            title="Supprimer"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+      {(item.status === "done" || item.status === "error" || item.status === "skipped") && (
+        <button
+          onClick={() => onRetry(item.id)}
+          className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+          title="Réessayer"
+        >
+          <RefreshCw size={13} />
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ── Main component ────────────────────────────────────────────
 const AdminCoomerSearch = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
-  // States for Creator Search
-  const [searchQuery, setSearchQuery] = useState("");
+
+  // Search state
+  const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [searchCreators, setSearchCreators] = useState<any[]>([]);
-  const [queue, setQueue] = useState<ImportJob[]>([]);
+  const [results, setResults] = useState<CoomerCreator[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
+
+  // Queue state
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [running, setRunning] = useState(false);
+  const [showQueue, setShowQueue] = useState(true);
+  const abortRef = useRef(false);
 
-  // States for Mass URL Import
-  const [urlsInput, setUrlsInput] = useState("");
-  const [importingUrls, setImportingUrls] = useState(false);
-  const [importStats, setImportStats] = useState<{imported: number, duplicates: number, errors: number} | null>(null);
+  // Multi-links state
+  const [multiLinks, setMultiLinks] = useState("");
+  const [addingLinks, setAddingLinks] = useState(false);
 
-  // --- LOGIC: CREATOR SEARCH ---
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
+  // ── Search — via edge function (proxy serveur → coomer.st) ──
+  // Recherche : parse l'URL coomer.st collée par l'utilisateur
+  // Pas d'appel API — juste extraction service + ID depuis l'URL
+  const search = useCallback(async () => {
+    const q = query.trim();
+    if (q.length < 2) return;
     setSearching(true);
-    try {
-      const { data, error } = await supabase.functions.invoke("coomer-import", {
-        body: { action: "search-creators", query: searchQuery.trim() },
+    setSearchError(null);
+    setHasSearched(true);
+    const found: CoomerCreator[] = [];
+
+    // Détecter une URL coomer.st
+    const urlMatch = q.match(/coomer\.(?:st|su|party)\/([\w]+)\/user\/([^/?\s]+)/i);
+    if (urlMatch) {
+      const [, svc, userId] = urlMatch;
+      found.push({
+        id: userId,
+        name: userId,
+        service: svc.toLowerCase(),
+        indexed: undefined,
+        updated: undefined,
+        profile_url: `https://coomer.st/${svc}/user/${userId}`,
+        profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`,
+        cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}`,
       });
-      if (error) throw error;
-      setSearchCreators(data.results || []);
-    } catch (err: any) {
-      toast({ title: "Erreur de recherche", description: err.message, variant: "destructive" });
-    } finally {
-      setSearching(false);
+    } else {
+      // Username sans URL → créer une entrée pour OnlyFans par défaut
+      // L'utilisateur peut choisir le service dans le résultat
+      const SERVICES = ["onlyfans", "fansly", "patreon", "subscribestar", "fanbox"];
+      for (const svc of SERVICES) {
+        found.push({
+          id: q,
+          name: q,
+          service: svc,
+          indexed: undefined,
+          updated: undefined,
+          profile_url: `https://coomer.st/${svc}/user/${q}`,
+          profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${q}`,
+          cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${q}`,
+        });
+      }
     }
-  };
 
-  const addToQueue = (creator: any) => {
-    const id = `${creator.service}-${creator.id}`;
-    if (queue.find((j) => j.id === id)) return;
-    setQueue((prev) => [...prev, {
-      id,
-      name: creator.name,
-      service: creator.service,
-      status: "pending",
-    }]);
-  };
+    setResults(found);
+    setSearching(false);
+  }, [query]);
 
-  const processQueue = useCallback(async () => {
-    if (running || queue.length === 0) return;
-    const nextJob = queue.find((j) => j.status === "pending");
-    if (!nextJob) return;
-
-    setRunning(true);
-    setQueue((prev) => prev.map((j) => (j.id === nextJob.id ? { ...j, status: "running" } : j)));
-
-    try {
-      const { data, error } = await supabase.functions.invoke("coomer-import", {
-        body: {
-          action: "import-creator",
-          service: nextJob.service,
-          creator_id: nextJob.id.split("-")[1],
-          creator_name: nextJob.name,
+  // ── Add to queue ────────────────────────────────────────────
+  const addToQueue = useCallback((creator: CoomerCreator) => {
+    setQueue((prev) => {
+      if (prev.some((i) => i.creator.id === creator.id && i.creator.service === creator.service)) return prev;
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          creator,
+          status: "pending",
         },
-      });
+      ];
+    });
+    setShowQueue(true);
+  }, []);
 
-      if (error) throw error;
+  const addAllToQueue = useCallback(() => {
+    const toAdd = results.filter((r) => !queue.some((i) => i.creator.id === r.id && i.creator.service === r.service));
+    if (!toAdd.length) return;
+    setQueue((prev) => [
+      ...prev,
+      ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus })),
+    ]);
+    setShowQueue(true);
+    toast({ title: `${toAdd.length} créateur(s) ajouté(s) à la file` });
+  }, [results, queue, toast]);
 
-      setQueue((prev) =>
-        prev.map((j) =>
-          j.id === nextJob.id
-            ? { ...j, status: "done", found: data.videos_found, imported: data.imported }
-            : j
-        )
-      );
-      queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
-    } catch (err: any) {
-      setQueue((prev) => prev.map((j) => (j.id === nextJob.id ? { ...j, status: "error", error: err.message } : j)));
-    } finally {
-      setRunning(false);
+  const removeFromQueue = useCallback((id: string) => {
+    setQueue((prev) => prev.filter((i) => i.id !== id));
+  }, []);
+
+  const skipItem = useCallback((id: string) => {
+    setQueue((prev) => prev.map((i) => (i.id === id ? { ...i, status: "skipped" } : i)));
+  }, []);
+
+  const clearDone = useCallback(() => {
+    setQueue((prev) => prev.filter((i) => i.status === "pending" || i.status === "running"));
+  }, []);
+
+  const retryItem = useCallback((id: string) => {
+    setQueue((prev) => prev.map((i) => i.id === id ? { ...i, status: "pending", error: undefined, progress: undefined } : i));
+  }, []);
+
+  const parseAndAddLinks = useCallback(async () => {
+    const lines = multiLinks.split(/[\n,]+/).map((l: string) => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    setAddingLinks(true);
+
+    const toAdd: CoomerCreator[] = [];
+    for (const line of lines) {
+      const m = line.match(/coomer\.(st|su|party)\/(\w+)\/user\/([^/?\s]+)/i);
+      if (m) {
+        const svc = m[2].toLowerCase();
+        const userId = m[3];
+        const inQueue = queue.some((i) => i.creator.service === svc && i.creator.id === userId);
+        const inBatch = toAdd.some((c) => c.service === svc && c.id === userId);
+        if (!inQueue && !inBatch) {
+          toAdd.push({
+            id: userId,
+            name: userId,
+            service: svc,
+            profile_url: `https://coomer.st/${svc}/user/${userId}`,
+            profile_pic_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/icons/${svc}/${userId}`,
+            cover_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/img/banners/${svc}/${userId}`,
+          });
+        }
+      }
     }
-  }, [queue, running, queryClient]);
 
-  const removeJob = (id: string) => setQueue((prev) => prev.filter((j) => j.id !== id));
-  const clearDone = () => setQueue((prev) => prev.filter((j) => j.status !== "done"));
-
-  const pendingCount = queue.filter((j) => j.status === "pending").length;
-  const doneCount = queue.filter((j) => j.status === "done").length;
-
-  // --- LOGIC: MASS URL IMPORT ---
-  const handleMassImport = async () => {
-    if (!urlsInput.trim()) return;
-    setImportingUrls(true);
-    setImportStats(null);
-
-    try {
-      // 1. Analyse des URLs
-      const { data: parseData, error: parseError } = await supabase.functions.invoke("coomer-import", {
-        body: { action: "parse-url", url: urlsInput.trim() },
+    if (toAdd.length) {
+      setQueue((prev) => [
+        ...prev,
+        ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus })),
+      ]);
+      setShowQueue(true);
+      const dupes = lines.filter((l: string) => /coomer/.test(l)).length - toAdd.length;
+      toast({
+        title: `${toAdd.length} créateur(s) ajouté(s) à la file`,
+        description: dupes > 0 ? `${dupes} doublon(s) ignoré(s)` : undefined,
       });
-      if (parseError) throw parseError;
+      setMultiLinks("");
+    } else {
+      toast({ title: "Aucun lien valide", description: "Format : https://coomer.st/onlyfans/user/xxx", variant: "destructive" });
+    }
+    setAddingLinks(false);
+  }, [multiLinks, queue, toast]);
 
-      if (!parseData.videos || parseData.videos.length === 0) {
-        toast({ title: "Aucune vidéo trouvée", description: "Vérifiez vos liens. Ils doivent pointer vers des posts ou des fichiers vidéos.", variant: "destructive" });
-        setImportingUrls(false);
-        return;
+  // ── Helpers : fetch coomer.st depuis le browser ─────────────
+  const fetchCreatorVideos = useCallback(async (svc: string, creatorId: string, onProgress: (msg: string) => void) => {
+    const BASE = "https://coomer.st";
+    const PROXY_BASE = "https://still-disk-5cf6streamflex.hatem44655f.workers.dev";
+    const VIDEO_EXTS = ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"];
+    const isVideo = (name: string) => {
+      const ext = (name || "").split(".").pop()?.toLowerCase() || "";
+      return VIDEO_EXTS.includes(ext);
+    };
+
+    const videos: any[] = [];
+    let offset = 0;
+    let pages = 0;
+    onProgress("Récupération des posts…");
+
+    while (pages < 200) {
+      const resp = await fetch(
+        `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
+        {
+          headers: { Accept: "application/json" },
+          mode: "cors",
+          credentials: "omit",
+        },
+      );
+      if (!resp.ok) break;
+      const posts: any[] = await resp.json();
+      if (!Array.isArray(posts) || posts.length === 0) break;
+
+      for (const post of posts) {
+        // Fichier principal
+        if (post.file?.path && isVideo(post.file.name || post.file.path)) {
+          videos.push({
+            url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/data${post.file.path}`,
+            title: post.title || post.file.name || "Vidéo",
+            thumbnail_url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/thumbnail${post.file.path}`,
+            metadata: { service: svc, post_id: post.id, published: post.published },
+          });
+        }
+        // Pièces jointes
+        for (const att of post.attachments || []) {
+          if (att.path && isVideo(att.name || att.path)) {
+            videos.push({
+              url: `https://still-disk-5cf6streamflex.hatem44655f.workers.dev/data${att.path}`,
+              title: att.name || post.title || "Vidéo",
+              thumbnail_url: null,
+              metadata: { service: svc, post_id: post.id, published: post.published },
+            });
+          }
+        }
       }
 
-      // 2. Envoi du lot (batch) vers la base de données
-      const { data: batchData, error: batchError } = await supabase.functions.invoke("coomer-import", {
-        body: { action: "import-batch", videos: parseData.videos },
-      });
-      if (batchError) throw batchError;
-
-      setImportStats({
-        imported: batchData.imported,
-        duplicates: batchData.duplicates,
-        errors: batchData.errors
-      });
-
-      toast({ title: "Importation de masse terminée !" });
-      setUrlsInput(""); // On vide la zone de texte après succès
-      queryClient.invalidateQueries({ queryKey: ["admin-stats"] });
-
-    } catch (err: any) {
-      toast({ title: "Erreur lors de l'importation", description: err.message, variant: "destructive" });
-    } finally {
-      setImportingUrls(false);
+      onProgress(`${videos.length} vidéo(s) trouvée(s)… (page ${pages + 1})`);
+      offset += 50;
+      pages++;
+      if (posts.length < 50) break;
     }
-  };
+
+    return videos;
+  }, []);
+
+  // ── Run queue — browser fetch + edge function insert ─────────
+  const runQueue = useCallback(async () => {
+    if (running || !user) return;
+    abortRef.current = false;
+    setRunning(true);
+
+    const pending = queue.filter((i) => i.status === "pending");
+    for (const item of pending) {
+      // Pause de 2s entre chaque import pour éviter les timeouts Supabase
+      if (pending.indexOf(item) > 0) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+      if (abortRef.current) break;
+
+      setQueue((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, status: "running", progress: { fetching: true } } : i)),
+      );
+
+      try {
+        const { service, id: creatorId, name: creatorName } = item.creator;
+
+        // ── Étape 1 : browser récupère les posts depuis coomer.st ──
+        let videosFound = 0;
+        const videos = await fetchCreatorVideos(service, creatorId, (msg) =>
+          setQueue((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true, videos_found: videosFound } } : i)),
+          ),
+        );
+        videosFound = videos.length;
+
+        setQueue((prev) =>
+          prev.map((i) =>
+            i.id === item.id ? { ...i, progress: { fetching: false, videos_found: videos.length } } : i,
+          ),
+        );
+
+        if (videos.length === 0) {
+          setQueue((prev) =>
+            prev.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    status: "done",
+                    progress: { fetching: false, videos_found: 0, imported: 0, duplicates: 0, errors: 0 },
+                  }
+                : i,
+            ),
+          );
+          toast({ title: `ℹ️ ${creatorName}`, description: "Aucune vidéo trouvée sur ce profil." });
+          continue;
+        }
+
+        // ── Étape 2 : edge function insère en base (par chunks de 500) ──
+        let imported = 0,
+          duplicates = 0,
+          errors = 0;
+        const CHUNK = 500;
+        for (let i = 0; i < videos.length; i += CHUNK) {
+          if (abortRef.current) break;
+          const chunk = videos.slice(i, i + CHUNK);
+          const { data, error } = await supabase.functions.invoke("coomer-import?action=import-batch", {
+            body: {
+              videos: chunk.map((v) => ({ ...v, model_name: creatorName, source: "coomer" })),
+              creator_service: service,
+              creator_id: creatorId,
+              creator_name: creatorName,
+            },
+          });
+          if (error) {
+            errors += chunk.length;
+            continue;
+          }
+          imported += data?.imported || 0;
+          duplicates += data?.duplicates || 0;
+          errors += data?.errors || 0;
+        }
+
+        // ── Étape 3 : mettre à jour/créer le modèle ──
+        await supabase.functions.invoke("coomer-import?action=import-creator", {
+          body: {
+            service,
+            creator_id: creatorId,
+            creator_name: creatorName,
+            skip_fetch: true,
+            cover_as_profile: true,
+          },
+        });
+
+        setQueue((prev) =>
+          prev.map((i) =>
+            i.id === item.id
+              ? {
+                  ...i,
+                  status: "done",
+                  progress: { fetching: false, videos_found: videos.length, imported, duplicates, errors },
+                }
+              : i,
+          ),
+        );
+
+        toast({
+          title: `✅ ${creatorName} importé`,
+          description: `${imported} vidéo(s) · ${duplicates} doublon(s)`,
+        });
+
+        queryClient.invalidateQueries({ queryKey: ["models"] });
+        queryClient.invalidateQueries({ queryKey: ["imported-videos"] });
+      } catch (e: any) {
+        setQueue((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, status: "error", error: e.message || "Erreur inconnue" } : i)),
+        );
+      }
+
+      if (!abortRef.current) await new Promise((r) => setTimeout(r, 800));
+    }
+
+    setRunning(false);
+    abortRef.current = false;
+  }, [running, queue, user, toast, queryClient, fetchCreatorVideos]);
+
+  const stopQueue = useCallback(() => {
+    abortRef.current = true;
+    setRunning(false);
+  }, []);
+
+  // ── Computed ────────────────────────────────────────────────
+  const pendingCount = queue.filter((i) => i.status === "pending").length;
+  const doneCount = queue.filter((i) => i.status === "done").length;
+  const errorCount = queue.filter((i) => i.status === "error").length;
+  const queuedIds = new Set(queue.map((i) => `${i.creator.service}:${i.creator.id}`));
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Download className="h-6 w-6 text-primary" /> Importation Coomer
-          </h2>
-          <p className="text-muted-foreground">Recherchez des créateurs ou importez des listes de liens.</p>
-        </div>
+    <div className="space-y-6">
+      {/* ── Header ── */}
+      <div>
+        <h2 className="text-xl font-semibold text-foreground flex items-center gap-2">
+          <Search size={20} className="text-primary" />
+          Recherche Coomer
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Collez l'URL coomer.st d'un créateur pour l'ajouter à la file d'import. Exemple :
+          https://coomer.st/fansly/user/549327668156313600 ou https://coomer.st/onlyfans/user/zoeyt123
+        </p>
       </div>
 
-      <Tabs defaultValue="mass-url" className="space-y-6">
-        <TabsList className="bg-card border border-border">
-          <TabsTrigger value="mass-url" className="gap-2"><Link size={14} /> Ajout de Masse (Liens)</TabsTrigger>
-          <TabsTrigger value="search" className="gap-2"><Search size={14} /> Recherche de Profils</TabsTrigger>
-        </TabsList>
-
-        {/* --------------------------------------------------------- */}
-        {/* ONGLET 1 : AJOUT DE MASSE (LIENS DIRECTS)                 */}
-        {/* --------------------------------------------------------- */}
-        <TabsContent value="mass-url" className="m-0 focus-visible:outline-none focus-visible:ring-0">
-          <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-sm space-y-4 max-w-5xl">
-             <h3 className="font-bold flex items-center gap-2 text-lg text-foreground">
-                <Link className="h-5 w-5 text-primary" /> Collez vos liens directs
-             </h3>
-             <p className="text-sm text-muted-foreground leading-relaxed">
-                Copiez-collez vos liens Coomer ici (un lien par ligne). Vous pouvez coller des liens vers des profils entiers, des posts spécifiques, ou directement vers des fichiers mp4. Le serveur se chargera de trier, d'assigner les modèles et d'ignorer les doublons automatiquement. <em>(Recommandé : 50 à 100 liens par lot).</em>
-             </p>
-
-             <Textarea
-               value={urlsInput}
-               onChange={(e) => setUrlsInput(e.target.value)}
-               placeholder="https://coomer.st/onlyfans/user/exemple/post/123456&#10;https://coomer.su/onlyfans/user/exemple2/post/78910&#10;..."
-               className="min-h-[250px] font-mono text-xs bg-background/50 border-border/50 focus:border-primary/50 resize-y"
-             />
-
-             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
-                {importStats ? (
-                  <div className="flex flex-wrap gap-4 text-sm bg-muted/30 px-4 py-2 rounded-lg border border-border/40">
-                    <span className="text-emerald-500 flex items-center gap-1.5"><CheckCircle2 size={16}/> <strong>{importStats.imported}</strong> importées</span>
-                    <span className="text-amber-500 flex items-center gap-1.5"><RefreshCw size={16}/> <strong>{importStats.duplicates}</strong> doublons</span>
-                    {importStats.errors > 0 && <span className="text-destructive flex items-center gap-1.5"><AlertTriangle size={16}/> <strong>{importStats.errors}</strong> erreurs</span>}
-                  </div>
-                ) : <span />}
-
-                <Button
-                  onClick={handleMassImport}
-                  disabled={importingUrls || !urlsInput.trim()}
-                  className="rounded-xl px-6 shadow-sm shadow-primary/20 hover:shadow-primary/40 transition-all gap-2 sm:ml-auto"
-                >
-                  {importingUrls ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  {importingUrls ? "Analyse et importation en cours..." : "Lancer l'importation de masse"}
-                </Button>
-             </div>
-          </div>
-        </TabsContent>
-
-        {/* --------------------------------------------------------- */}
-        {/* ONGLET 2 : RECHERCHE CLASSIQUE & FILE D'ATTENTE           */}
-        {/* --------------------------------------------------------- */}
-        <TabsContent value="search" className="m-0 focus-visible:outline-none focus-visible:ring-0">
-          <div className="flex justify-end mb-4">
-            {queue.length > 0 && (
-              <Button 
-                onClick={processQueue} 
-                disabled={running || pendingCount === 0}
-                className="rounded-xl shadow-lg shadow-primary/20"
-              >
-                {running ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4 fill-current" />
+      <div className="grid lg:grid-cols-[1fr_380px] gap-6">
+        {/* ── Left: Search + Results ── */}
+        <div className="space-y-5">
+          {/* Search bar */}
+          <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && search()}
+                  placeholder="URL ou username (ex: annapolinaxxxx)"
+                  className="pl-9 pr-8 h-10"
+                  autoFocus
+                />
+                {query && (
+                  <button
+                    onClick={() => { setQuery(""); setResults([]); setHasSearched(false); setSearchError(null); }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    title="Effacer"
+                  >
+                    <X size={14} />
+                  </button>
                 )}
-                {running ? "Importation en cours..." : `Lancer la file (${pendingCount})`}
+              </div>
+              <Button onClick={search} disabled={searching || query.trim().length < 2} className="h-10 px-5 gap-2">
+                {searching ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                {searching ? "Recherche…" : "Rechercher"}
               </Button>
+            </div>
+
+            {/* Multi-links paste zone */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Link size={13} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground font-medium">Coller plusieurs liens (un par ligne)</span>
+              </div>
+              <Textarea
+                value={multiLinks}
+                onChange={(e) => setMultiLinks(e.target.value)}
+                placeholder={"https://coomer.st/onlyfans/user/xxx\nhttps://coomer.st/fansly/user/yyy\n..."}
+                className="text-xs min-h-[80px] resize-none font-mono"
+                rows={3}
+              />
+              {multiLinks.trim() && (
+                <Button
+                  size="sm"
+                  onClick={parseAndAddLinks}
+                  disabled={addingLinks}
+                  className="w-full gap-2 h-8"
+                >
+                  {addingLinks ? <Loader2 size={13} className="animate-spin" /> : <ShoppingCart size={13} />}
+                  Ajouter à la file ({multiLinks.split(/[\n,]+/).filter(l => l.trim().includes("coomer")).length} lien(s))
+                </Button>
+              )}
+            </div>
+
+            {/* Platform legend */}
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(PLATFORM_CONFIG).map(([key, cfg]) => (
+                <span
+                  key={key}
+                  className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full border", cfg.bg, cfg.color)}
+                >
+                  {cfg.label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Results */}
+          {hasSearched && (
+            <div className="space-y-3">
+              {/* Results header */}
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {searchError ? (
+                    <span className="text-muted-foreground">{searchError}</span>
+                  ) : (
+                    <span>{results.length} créateur(s) trouvé(s)</span>
+                  )}
+                </p>
+                {results.length > 0 && (
+                  <Button size="sm" variant="outline" onClick={addAllToQueue} className="h-7 text-xs gap-1.5">
+                    <Plus size={12} /> Tout ajouter
+                  </Button>
+                )}
+              </div>
+
+              {/* Grid of creator cards */}
+              {results.length > 0 ? (
+                <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {results.map((creator) => (
+                    <CreatorCard
+                      key={`${creator.service}:${creator.id}`}
+                      creator={creator}
+                      queued={queuedIds.has(`${creator.service}:${creator.id}`)}
+                      onAdd={addToQueue}
+                    />
+                  ))}
+                </div>
+              ) : (
+                !searching &&
+                hasSearched && (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <User size={40} className="mx-auto opacity-20 mb-3" />
+                    <p className="text-sm">Aucun créateur trouvé</p>
+                    <p className="text-xs mt-1">Essayez un nom différent ou plus court</p>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
+          {/* Initial state */}
+          {!hasSearched && (
+            <div className="text-center py-16 text-muted-foreground border border-dashed border-border rounded-xl">
+              <Search size={48} className="mx-auto opacity-15 mb-4" />
+              <p className="text-base font-medium">Tapez un nom pour commencer</p>
+              <p className="text-sm mt-1 opacity-60">La recherche est effectuée sur tous les services coomer</p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Right: Import queue ── */}
+        <div className="space-y-3">
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            {/* Queue header */}
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b border-border cursor-pointer hover:bg-accent/30 transition-colors"
+              onClick={() => setShowQueue((v) => !v)}
+            >
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-primary" />
+                <span className="text-sm font-semibold text-foreground">File d'attente</span>
+                {queue.length > 0 && (
+                  <span className="text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                    {queue.length}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {/* Stats badges */}
+                {doneCount > 0 && (
+                  <span className="text-[10px] bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded-full">
+                    ✓ {doneCount}
+                  </span>
+                )}
+                {errorCount > 0 && (
+                  <span className="text-[10px] bg-destructive/15 text-destructive px-1.5 py-0.5 rounded-full">
+                    ✗ {errorCount}
+                  </span>
+                )}
+                {showQueue ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </div>
+            </div>
+
+            {/* Queue list */}
+            {showQueue && (
+              <div className="p-3 space-y-2 max-h-[480px] overflow-y-auto">
+                {queue.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Film size={32} className="mx-auto opacity-20 mb-2" />
+                    <p className="text-xs">File vide — ajoutez des créateurs depuis les résultats</p>
+                  </div>
+                ) : (
+                  queue.map((item) => (
+                    <QueueRow key={item.id} item={item} onRemove={removeFromQueue} onSkip={skipItem} onRetry={retryItem} />
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Queue actions */}
+            {queue.length > 0 && (
+              <div className="px-3 pb-3 space-y-2">
+                {!running ? (
+                  <Button onClick={runQueue} disabled={pendingCount === 0} className="w-full gap-2">
+                    <Download size={15} />
+                    {pendingCount === 0 ? "Aucun élément en attente" : `Importer ${pendingCount} créateur(s)`}
+                  </Button>
+                ) : (
+                  <Button onClick={stopQueue} variant="destructive" className="w-full gap-2">
+                    <X size={15} /> Arrêter
+                  </Button>
+                )}
+
+                {doneCount > 0 && !running && (
+                  <Button onClick={clearDone} variant="outline" size="sm" className="w-full text-xs gap-1.5">
+                    <Trash2 size={11} /> Effacer les terminés ({doneCount})
+                  </Button>
+                )}
+              </div>
             )}
           </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 space-y-4">
-              <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-sm space-y-4">
-                <div className="flex gap-2">
-                  <div className="relative flex-1 group">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
-                    <Input
-                      placeholder="Nom du créateur (ex: mysteriouzwoman)..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-                      className="pl-9 pr-10 bg-background/50 border-border/50 focus:border-primary/50 transition-all rounded-xl"
-                    />
-                    {searchQuery && (
-                      <button
-                        onClick={() => setSearchQuery("")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <X size={16} />
-                      </button>
-                    )}
-                  </div>
-                  <Button 
-                    onClick={handleSearch} 
-                    disabled={searching}
-                    className="rounded-xl px-6 shadow-sm shadow-primary/20 hover:shadow-primary/40 transition-all gap-2"
-                  >
-                    {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                    <span className="hidden sm:inline">Rechercher</span>
-                  </Button>
-                </div>
 
-                {searchCreators.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSearchQuery("");
-                      setSearchCreators([]);
-                    }}
-                    className="text-xs text-muted-foreground hover:text-red-400 gap-1.5 px-2"
-                  >
-                    <Trash2 size={12} /> Effacer les résultats
-                  </Button>
-                )}
-
-                {searchCreators.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-                    {searchCreators.map((creator) => {
-                      const config = PLATFORM_CONFIG[creator.service] || { label: creator.service, color: "text-gray-400", bg: "bg-gray-500/10" };
-                      const inQueue = queue.find((j) => j.id === `${creator.service}-${creator.id}`);
-
-                      return (
-                        <div 
-                          key={`${creator.service}-${creator.id}`}
-                          className="group relative bg-muted/30 border border-border/40 rounded-xl p-4 hover:border-primary/30 hover:bg-muted/50 transition-all overflow-hidden"
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="relative h-12 w-12 rounded-full overflow-hidden bg-muted border border-border/20">
-                              {creator.profile_pic_url ? (
-                                <img src={creator.profile_pic_url} alt="" className="h-full w-full object-cover" />
-                              ) : (
-                                <User className="h-full w-full p-2 text-muted-foreground" />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-semibold truncate group-hover:text-primary transition-colors">{creator.name}</h4>
-                              <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium uppercase", config.bg, config.color)}>
-                                {config.label}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          <div className="mt-4 flex items-center justify-between gap-2">
-                            <a 
-                              href={creator.profile_url} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1"
-                            >
-                              Profil <ExternalLink size={10} />
-                            </a>
-                            <Button
-                              size="sm"
-                              variant={inQueue ? "secondary" : "default"}
-                              disabled={!!inQueue}
-                              onClick={() => addToQueue(creator)}
-                              className="h-8 rounded-lg text-xs gap-1.5"
-                            >
-                              {inQueue ? <CheckCircle2 size={14} /> : <Plus size={14} />}
-                              {inQueue ? "Dans la file" : "Ajouter"}
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : searching ? (
-                  <div className="py-12 flex flex-col items-center justify-center text-muted-foreground gap-3">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
-                    <p className="text-sm animate-pulse">Recherche des profils sur toutes les plateformes...</p>
-                  </div>
-                ) : (
-                  <div className="py-12 flex flex-col items-center justify-center text-muted-foreground/40 gap-3 border-2 border-dashed border-border/40 rounded-xl">
-                    <Search className="h-10 w-10 opacity-20" />
-                    <p className="text-sm">Aucun résultat à afficher</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-6">
-              <div className="bg-card border border-border/50 rounded-2xl p-6 shadow-sm space-y-4">
-                <h3 className="font-bold flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-primary" /> File d'attente
-                  {queue.length > 0 && (
-                    <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full">
-                      {queue.length}
-                    </span>
-                  )}
-                </h3>
-
-                {queue.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground border border-dashed rounded-xl border-border/60">
-                    La file est vide
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                    {queue.map((job) => (
-                      <div key={job.id} className="bg-muted/30 border border-border/40 rounded-xl p-3 text-sm relative group">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-medium truncate pr-8">{job.name}</span>
-                          <button 
-                            onClick={() => removeJob(job.id)}
-                            className="opacity-0 group-hover:opacity-100 absolute top-3 right-3 text-muted-foreground hover:text-red-400 transition-all"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-                        
-                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                          <span className="uppercase">{job.service}</span>
-                          {job.status === "running" && (
-                            <span className="text-primary flex items-center gap-1 animate-pulse">
-                              <Loader2 size={10} className="animate-spin" /> Importation...
-                            </span>
-                          )}
-                          {job.status === "done" && (
-                            <span className="text-green-400 flex items-center gap-1">
-                              <CheckCircle2 size={10} /> {job.imported} vidéos
-                            </span>
-                          )}
-                          {job.status === "error" && (
-                            <span className="text-red-400 flex items-center gap-1" title={job.error}>
-                              <AlertTriangle size={10} /> Échec
-                            </span>
-                          )}
-                          {job.status === "pending" && (
-                            <span className="flex items-center gap-1 italic opacity-60">En attente</span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    {running && (
-                      <Button variant="ghost" size="sm" className="w-full text-xs text-red-400/70 hover:text-red-400 gap-1.5" onClick={() => setRunning(false)}>
-                        <X size={15} /> Arrêter
-                      </Button>
-                    )}
-
-                    {doneCount > 0 && !running && (
-                      <Button onClick={clearDone} variant="outline" size="sm" className="w-full text-xs gap-1.5">
-                        <Trash2 size={11} /> Effacer les terminés ({doneCount})
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Help box */}
-              <div className="bg-muted/30 border border-border/60 rounded-xl p-4 space-y-2 text-xs text-muted-foreground">
-                <p className="font-semibold text-foreground text-xs flex items-center gap-1.5">
-                  <Film size={12} className="text-primary" /> Ce qui est importé
-                </p>
-                <ul className="space-y-1 leading-relaxed">
-                  <li>✅ Photo de profil + bannière de couverture</li>
-                  <li>✅ Toutes les vidéos (.mp4, .webm, .mkv, …)</li>
-                  <li>✅ Miniatures disponibles</li>
-                  <li>✅ Ajout dans la page Modèles</li>
-                  <li>❌ Images (.jpg, .png, …)</li>
-                  <li>❌ Fichiers audio (.mp3, .m4a, …)</li>
-                </ul>
-                <p className="mt-2 text-[10px] opacity-60">
-                  Les doublons sont automatiquement ignorés.
-                </p>
-              </div>
-            </div>
+          {/* Help box */}
+          <div className="bg-muted/30 border border-border/60 rounded-xl p-4 space-y-2 text-xs text-muted-foreground">
+            <p className="font-semibold text-foreground text-xs flex items-center gap-1.5">
+              <Film size={12} className="text-primary" /> Ce qui est importé
+            </p>
+            <ul className="space-y-1 leading-relaxed">
+              <li>✅ Photo de profil + bannière de couverture</li>
+              <li>✅ Toutes les vidéos (.mp4, .webm, .mkv, …)</li>
+              <li>✅ Miniatures disponibles</li>
+              <li>✅ Ajout dans la page Modèles</li>
+              <li>❌ Images (.jpg, .png, …)</li>
+              <li>❌ Fichiers audio (.mp3, .m4a, …)</li>
+            </ul>
+            <p className="mt-2 text-[10px] opacity-60">
+              Les doublons (vidéos déjà importées) sont automatiquement ignorés. La file traite les créateurs un par un
+              pour éviter les limites de taux.
+            </p>
           </div>
-        </TabsContent>
-      </Tabs>
+        </div>
+      </div>
     </div>
   );
 };
