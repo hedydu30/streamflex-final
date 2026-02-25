@@ -44,8 +44,8 @@ serve(async (req) => {
     }
 
     const url = new URL(req.url);
-    const action = url.searchParams.get("action") || "parse-url";
     const body = req.method === "POST" ? await req.json() : {};
+    const action = url.searchParams.get("action") || body.action || "parse-url";
 
     const browserHeaders = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -53,6 +53,45 @@ serve(async (req) => {
     };
 
     switch (action) {
+      case "fetch-posts": {
+        const { service: fpSvc, creator_id: fpId, offset: fpOffset = 0 } = body;
+        if (!fpSvc || !fpId) {
+          return new Response(JSON.stringify({ error: "service et creator_id requis" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const fpUrl = `https://coomer.st/api/v1/${fpSvc}/user/${encodeURIComponent(fpId)}/posts?o=${fpOffset}`;
+        console.log(`[fetch-posts] GET ${fpUrl}`);
+        try {
+          const r = await fetch(fpUrl, { headers: browserHeaders });
+          console.log(`[fetch-posts] status=${r.status}`);
+          if (r.status === 429) {
+            return new Response(JSON.stringify({ error: "rate_limit", status: 429, posts: [] }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          if (!r.ok) {
+            return new Response(JSON.stringify({ error: `http_${r.status}`, status: r.status, posts: [] }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const raw = await r.text();
+          if (!raw || raw.trimStart().startsWith("<")) {
+            return new Response(JSON.stringify({ error: "html_response", posts: [] }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const posts = JSON.parse(raw);
+          return new Response(JSON.stringify({ posts: Array.isArray(posts) ? posts : [] }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (e: any) {
+          return new Response(JSON.stringify({ error: e.message, posts: [] }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
       case "search-creators": {
         const query = (body.query || "").trim();
         if (!query) {
@@ -93,7 +132,7 @@ serve(async (req) => {
       }
 
       case "import-creator": {
-        const { service, creator_id, creator_name, skip_fetch, cover_as_profile } = body;
+        const { service, creator_id, creator_name, skip_fetch } = body;
         if (!service || !creator_id) {
           return new Response(JSON.stringify({ error: "service et creator_id requis" }), {
             status: 400,
@@ -116,12 +155,12 @@ serve(async (req) => {
           modelId = existingModel.id;
           await supabase
             .from("models")
-            .update({ profile_image_url: cover_as_profile ? coverUrl : profilePicUrl, source_platform: service })
+            .update({ profile_image_url: profilePicUrl, source_platform: service })
             .eq("id", modelId);
         } else {
           const { data: created } = await supabase
             .from("models")
-            .insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: cover_as_profile ? coverUrl : profilePicUrl })
+            .insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: profilePicUrl })
             .select("id")
             .single();
           modelId = created?.id || null;
@@ -138,11 +177,9 @@ serve(async (req) => {
         let offset = 0, hasMore = true, pages = 0;
         while (hasMore && pages < 200) {
           try {
-            const r = await fetch(`https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`, { headers: browserHeaders });
+            const r = await fetch(`https://coomer.st/api/v1/${service}/user/${creator_id}?o=${offset}`, { headers: browserHeaders });
             if (!r.ok) break;
-            const rawText = await r.text();
-            if (!rawText || rawText.trimStart().startsWith("<")) break;
-            const posts = JSON.parse(rawText);
+            const posts = await r.json();
             if (!posts || posts.length === 0) {
               hasMore = false;
               break;
@@ -244,7 +281,7 @@ serve(async (req) => {
         if (existingModel) {
           modelId = existingModel.id;
         } else {
-          const { data: created } = await supabase.from("models").insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: cover_as_profile ? coverUrl : profilePicUrl }).select("id").single();
+          const { data: created } = await supabase.from("models").insert({ user_id: user.id, name: modelName, source_platform: service, profile_image_url: profilePicUrl }).select("id").single();
           modelId = created?.id || null;
         }
 
