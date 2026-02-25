@@ -411,7 +411,7 @@ const AdminCoomerSearch = () => {
         const userId = m[3].trim();
         if (!queue.some((i) => i.creator.service === svc && i.creator.id === userId) &&
             !toAdd.some((c) => c.service === svc && c.id === userId)) {
-          toAdd.push({ id: userId, name: userId, service: svc, profile_url: , profile_pic_url: , cover_url:  });
+          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}` });
         }
       }
     }
