@@ -643,8 +643,7 @@ const AdminCoomerSearch = () => {
             {/* Multi-liens */}
             <div className="space-y-2 pt-1 border-t border-border/50">
               <div className="flex items-center gap-1.5"><Link2 size={12} className="text-muted-foreground" /><span className="text-xs text-muted-foreground">Coller plusieurs liens (un par ligne)</span></div>
-              <Textarea value={multiLinks} onChange={(e) => setMultiLinks(e.target.value)} placeholder={"https://coomer.st/onlyfans/user/xxx
-https://coomer.st/fansly/user/yyy"} className="text-xs min-h-[72px] resize-none font-mono" rows={3} />
+              <Textarea value={multiLinks} onChange={(e) => setMultiLinks(e.target.value)} placeholder={"https://coomer.st/onlyfans/user/xxx\nhttps://coomer.st/fansly/user/yyy"} className="text-xs min-h-[72px] resize-none font-mono" rows={3} />
               {multiLinks.trim() && (
                 <Button size="sm" onClick={parseAndAddLinks} disabled={addingLinks} className="w-full gap-2 h-8">
                   {addingLinks ? <Loader2 size={13} className="animate-spin" /> : <ShoppingCart size={13} />}
