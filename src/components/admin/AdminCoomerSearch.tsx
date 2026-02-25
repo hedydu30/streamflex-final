@@ -924,4 +924,4 @@ https://coomer.st/fansly/user/549327668156313600 ou https://coomer.st/onlyfans/u
 );
 };
 
-export default AdminCoomerSearch;
+export default AdminCoomerSearch
