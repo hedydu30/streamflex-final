@@ -400,9 +400,7 @@ const AdminCoomerSearch = () => {
   }, []);
 
   const parseAndAddLinks = useCallback(async () => {
-    const lines = multiLinks.replace(/
-/g, "").split(/[
-,]+/).map((l: string) => l.trim()).filter(Boolean);
+    const lines = multiLinks.split(/[\r\n,]+/).map((l: string) => l.trim()).filter(Boolean);
     if (!lines.length) return;
     setAddingLinks(true);
     const toAdd: CoomerCreator[] = [];
