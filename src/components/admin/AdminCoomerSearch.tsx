@@ -542,54 +542,45 @@ const AdminCoomerSearch = () => {
         const videos: any[] = [];
         let offset = 0, pages = 0;
 
-        // Fetch direct coomer.st — le browser peut y accéder contrairement aux proxys
-        // Stratégie : essayer coomer.st direct, fallback sur le proxy si CORS bloqué
-        const fetchPostsDirect = async (svc: string, uid: string, off: number): Promise<any[] | null> => {
-          // Liste d'URLs à essayer dans l'ordre
-          const urls = [
-            `https://coomer.st/api/v1/${svc}/user/${encodeURIComponent(uid)}/posts?o=${off}`,
-            `https://streamflex-proxy.hedydu30.workers.dev/api/${svc}/user/${encodeURIComponent(uid)}/posts?o=${off}`,
-          ];
-
-          for (const url of urls) {
-            for (let attempt = 0; attempt < 5; attempt++) {
-              if (abortRef.current) return null;
-              try {
-                const resp = await fetch(url, {
-                  headers: { Accept: "application/json" },
-                  mode: "cors",
-                  credentials: "omit",
-                });
-                if (resp.status === 429) {
-                  const delay = Math.min(3000 * Math.pow(2, attempt), 60000);
-                  console.warn(`[coomer] 429 attempt=${attempt+1} delay=${delay}ms url=${url}`);
-                  setQueue((prev) => prev.map((i) => i.id === item.id
-                    ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
-                    : i
-                  ));
-                  await new Promise(r => setTimeout(r, delay));
-                  continue;
-                }
-                if (resp.status === 0 || !resp.ok) {
-                  console.warn(`[coomer] ${resp.status} from ${url}, trying next`);
-                  break; // Passer à l'URL suivante
-                }
-                const raw = await resp.text();
-                if (!raw || raw.trimStart().startsWith("<") || raw.trimStart().startsWith("<!")) {
-                  console.warn(`[coomer] HTML response from ${url}, trying next`);
-                  break; // HTML = mauvais endpoint, passer au suivant
-                }
-                const data = JSON.parse(raw);
-                return Array.isArray(data) ? data : [];
-              } catch (e: any) {
-                if (e?.message?.includes("CORS") || e?.message?.includes("NetworkError") || e?.message?.includes("Failed to fetch")) {
-                  console.warn(`[coomer] CORS/network error on ${url}, trying next:`, e.message);
-                  break; // Passer à l'URL suivante
-                }
+        // Fetch via edge function Supabase (seule méthode qui bypass le blocage coomer.st)
+        // L'edge function est en eu-west-3 et n'est pas bloquée par coomer.st
+        const fetchPostsViaEdge = async (svc: string, uid: string, off: number): Promise<any[] | null> => {
+          for (let attempt = 0; attempt < 8; attempt++) {
+            if (abortRef.current) return null;
+            try {
+              const { data, error } = await supabase.functions.invoke("coomer-import?action=fetch-posts", {
+                body: { service: svc, creator_id: uid, offset: off },
+              });
+              if (error) {
                 const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
-                console.warn(`[coomer] exception retry ${attempt+1} in ${delay}ms:`, e.message);
+                console.warn(`[coomer] edge error attempt=${attempt+1} delay=${delay}ms:`, error.message);
+                setQueue((prev) => prev.map((i) => i.id === item.id
+                  ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
+                  : i
+                ));
                 await new Promise(r => setTimeout(r, delay));
+                continue;
               }
+              if (data?.error === "html_response") return [];
+              if (data?.status === 429) {
+                const delay = Math.min(3000 * Math.pow(2, attempt), 60000);
+                console.warn(`[coomer] 429 via edge attempt=${attempt+1} delay=${delay}ms`);
+                setQueue((prev) => prev.map((i) => i.id === item.id
+                  ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
+                  : i
+                ));
+                await new Promise(r => setTimeout(r, delay));
+                continue;
+              }
+              if (data?.status && data.status >= 400) {
+                console.warn(`[coomer] coomer HTTP ${data.status} — arrêt`);
+                return null;
+              }
+              return Array.isArray(data?.posts) ? data.posts : [];
+            } catch (e: any) {
+              const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
+              console.warn(`[coomer] exception attempt=${attempt+1}:`, e.message);
+              await new Promise(r => setTimeout(r, delay));
             }
           }
           return null;
@@ -597,7 +588,7 @@ const AdminCoomerSearch = () => {
 
         while (pages < 200) {
           if (abortRef.current) break;
-          const posts = await fetchPostsDirect(service, creatorId, offset);
+          const posts = await fetchPostsViaEdge(service, creatorId, offset);
           if (!posts || !posts.length) break;
 
           for (const post of posts) {

@@ -53,6 +53,43 @@ serve(async (req) => {
     };
 
     switch (action) {
+      // ── Proxy API léger : fetch une page de posts depuis coomer.st ──
+      // Utilisé par le browser pour contourner le CORS sans passer par Cloudflare
+      case "fetch-posts": {
+        const { service, creator_id, offset = 0 } = body;
+        if (!service || !creator_id) {
+          return new Response(JSON.stringify({ error: "service et creator_id requis" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const fetchUrl = `https://coomer.st/api/v1/${service}/user/${encodeURIComponent(creator_id)}/posts?o=${offset}`;
+        console.log(`[fetch-posts] ${fetchUrl}`);
+        try {
+          const r = await fetch(fetchUrl, { headers: browserHeaders });
+          console.log(`[fetch-posts] status=${r.status}`);
+          if (!r.ok) {
+            return new Response(JSON.stringify({ error: `coomer ${r.status}`, status: r.status }), {
+              status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const raw = await r.text();
+          if (!raw || raw.trimStart().startsWith("<")) {
+            return new Response(JSON.stringify({ error: "html_response", posts: [] }), {
+              status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          const posts = JSON.parse(raw);
+          return new Response(JSON.stringify({ posts: Array.isArray(posts) ? posts : [], status: r.status }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch(e: any) {
+          return new Response(JSON.stringify({ error: e.message, posts: [] }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+
       case "search-creators": {
         const query = (body.query || "").trim();
         if (!query) {
