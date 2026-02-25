@@ -647,9 +647,7 @@ const AdminCoomerSearch = () => {
               {multiLinks.trim() && (
                 <Button size="sm" onClick={parseAndAddLinks} disabled={addingLinks} className="w-full gap-2 h-8">
                   {addingLinks ? <Loader2 size={13} className="animate-spin" /> : <ShoppingCart size={13} />}
-                  Ajouter à la file ({multiLinks.replace(/
-/g,"").split(/[
-,]+/).filter((l: string) => /coomer/i.test(l)).length} lien(s))
+                  Ajouter à la file ({multiLinks.split(/[\r\n,]+/).filter((l: string) => /coomer/i.test(l.trim())).length} lien(s))
                 </Button>
               )}
             </div>
