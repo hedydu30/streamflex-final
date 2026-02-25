@@ -542,42 +542,62 @@ const AdminCoomerSearch = () => {
         const videos: any[] = [];
         let offset = 0, pages = 0;
 
-        // Fetch avec retry illimité sur 429 — backoff exponentiel plafonné à 30s
-        const fetchPage = async (url: string): Promise<any[] | null> => {
-          let attempt = 0;
-          while (true) {
-            if (abortRef.current) return null;
-            try {
-              const resp = await fetch(url, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" });
-              if (resp.status === 429) {
+        // Fetch direct coomer.st — le browser peut y accéder contrairement aux proxys
+        // Stratégie : essayer coomer.st direct, fallback sur le proxy si CORS bloqué
+        const fetchPostsDirect = async (svc: string, uid: string, off: number): Promise<any[] | null> => {
+          // Liste d'URLs à essayer dans l'ordre
+          const urls = [
+            `https://coomer.st/api/v1/${svc}/user/${encodeURIComponent(uid)}/posts?o=${off}`,
+            `https://streamflex-proxy.hedydu30.workers.dev/api/${svc}/user/${encodeURIComponent(uid)}/posts?o=${off}`,
+          ];
+
+          for (const url of urls) {
+            for (let attempt = 0; attempt < 5; attempt++) {
+              if (abortRef.current) return null;
+              try {
+                const resp = await fetch(url, {
+                  headers: { Accept: "application/json" },
+                  mode: "cors",
+                  credentials: "omit",
+                });
+                if (resp.status === 429) {
+                  const delay = Math.min(3000 * Math.pow(2, attempt), 60000);
+                  console.warn(`[coomer] 429 attempt=${attempt+1} delay=${delay}ms url=${url}`);
+                  setQueue((prev) => prev.map((i) => i.id === item.id
+                    ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
+                    : i
+                  ));
+                  await new Promise(r => setTimeout(r, delay));
+                  continue;
+                }
+                if (resp.status === 0 || !resp.ok) {
+                  console.warn(`[coomer] ${resp.status} from ${url}, trying next`);
+                  break; // Passer à l'URL suivante
+                }
+                const raw = await resp.text();
+                if (!raw || raw.trimStart().startsWith("<") || raw.trimStart().startsWith("<!")) {
+                  console.warn(`[coomer] HTML response from ${url}, trying next`);
+                  break; // HTML = mauvais endpoint, passer au suivant
+                }
+                const data = JSON.parse(raw);
+                return Array.isArray(data) ? data : [];
+              } catch (e: any) {
+                if (e?.message?.includes("CORS") || e?.message?.includes("NetworkError") || e?.message?.includes("Failed to fetch")) {
+                  console.warn(`[coomer] CORS/network error on ${url}, trying next:`, e.message);
+                  break; // Passer à l'URL suivante
+                }
                 const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
-                console.warn(`[coomer] 429 — retry ${attempt + 1} dans ${delay}ms`);
-                setQueue((prev) => prev.map((i) => i.id === item.id
-                  ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
-                  : i
-                ));
+                console.warn(`[coomer] exception retry ${attempt+1} in ${delay}ms:`, e.message);
                 await new Promise(r => setTimeout(r, delay));
-                attempt++;
-                continue;
               }
-              if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); return null; }
-              const raw = await resp.text();
-              if (!raw || raw.trimStart().startsWith("<")) return null;
-              const data = JSON.parse(raw);
-              return Array.isArray(data) ? data : [];
-            } catch(e) {
-              const delay = Math.min(3000 * Math.pow(2, attempt), 30000);
-              console.warn(`[coomer] exception retry ${attempt + 1} dans ${delay}ms`, e);
-              await new Promise(r => setTimeout(r, delay));
-              attempt++;
             }
           }
+          return null;
         };
 
         while (pages < 200) {
           if (abortRef.current) break;
-          const url = `https://streamflex-proxy.hedydu30.workers.dev/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`;
-          const posts = await fetchPage(url);
+          const posts = await fetchPostsDirect(service, creatorId, offset);
           if (!posts || !posts.length) break;
 
           for (const post of posts) {
@@ -609,8 +629,8 @@ const AdminCoomerSearch = () => {
           offset += 50;
           pages++;
           if (posts.length < 50) break;
-          // Pause 300ms entre chaque page pour éviter le 429
-          await new Promise(r => setTimeout(r, 300));
+          // Pause 500ms entre pages pour respecter le rate limit
+          await new Promise(r => setTimeout(r, 500));
         }
 
         // ── Étape 2 : créer/mettre à jour le modèle avec photo de couverture ──
