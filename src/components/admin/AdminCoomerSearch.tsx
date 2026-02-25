@@ -419,7 +419,7 @@ const AdminCoomerSearch = () => {
       setQueue((prev) => [...prev, ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus }))]);
       setShowQueue(true);
       const dupes = lines.filter((l: string) => /coomer/i.test(l)).length - toAdd.length;
-      toast({ title: , description: dupes > 0 ?  : undefined });
+      toast({ title: `${toAdd.length} créateur(s) ajouté(s)`, description: dupes > 0 ? `${dupes} doublon(s) ignoré(s)` : undefined });
       setMultiLinks("");
     } else {
       toast({ title: "Aucun lien valide", description: "Format : https://coomer.st/onlyfans/user/xxx", variant: "destructive" });
