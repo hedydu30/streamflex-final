@@ -44,8 +44,8 @@ serve(async (req) => {
     }
 
     const url = new URL(req.url);
-    const action = url.searchParams.get("action") || "parse-url";
     const body = req.method === "POST" ? await req.json() : {};
+    const action = url.searchParams.get("action") || body.action || "parse-url";
 
     const browserHeaders = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

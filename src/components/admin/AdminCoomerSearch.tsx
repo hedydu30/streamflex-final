@@ -548,8 +548,8 @@ const AdminCoomerSearch = () => {
           for (let attempt = 0; attempt < 8; attempt++) {
             if (abortRef.current) return null;
             try {
-              const { data, error } = await supabase.functions.invoke("coomer-import?action=fetch-posts", {
-                body: { service: svc, creator_id: uid, offset: off },
+              const { data, error } = await supabase.functions.invoke("coomer-import", {
+                body: { action: "fetch-posts", service: svc, creator_id: uid, offset: off },
               });
               if (error) {
                 const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
