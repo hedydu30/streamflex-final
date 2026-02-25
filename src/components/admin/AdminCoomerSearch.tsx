@@ -30,8 +30,6 @@ import {
   Link2,
 } from "lucide-react";
 
-const PROXY = "https://streamflex-proxy.hedydu30.workers.dev";
-
 // ── Platform config ───────────────────────────────────────────
 const PLATFORM_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   onlyfans: { label: "OnlyFans", color: "text-blue-400", bg: "bg-blue-500/10 border-blue-500/30" },
@@ -266,7 +264,7 @@ const QueueRow = ({
         )}
         {item.status === "done" && item.progress && (
           <p className="text-xs text-green-400 mt-0.5">
-            ✓ {item.progress.imported}/{(item.progress.imported ?? 0) + (item.progress.duplicates ?? 0)} importée(s)
+            ✓ {item.progress.imported} importée(s)
             {item.progress.duplicates ? ` · ${item.progress.duplicates} doublon(s)` : ""}
           </p>
         )}
@@ -279,30 +277,12 @@ const QueueRow = ({
       {/* Actions */}
       {item.status === "pending" && (
         <div className="flex gap-1">
-          <button
-            onClick={() => onSkip(item.id)}
-            className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-            title="Ignorer"
-          >
-            <SkipForward size={13} />
-          </button>
-          <button
-            onClick={() => onRemove(item.id)}
-            className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-            title="Supprimer"
-          >
-            <X size={13} />
-          </button>
+          <button onClick={() => onSkip(item.id)} className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors" title="Ignorer"><SkipForward size={13} /></button>
+          <button onClick={() => onRemove(item.id)} className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Supprimer"><X size={13} /></button>
         </div>
       )}
       {(item.status === "done" || item.status === "error" || item.status === "skipped") && (
-        <button
-          onClick={() => onRetry(item.id)}
-          className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
-          title="Réessayer"
-        >
-          <RefreshCw size={13} />
-        </button>
+        <button onClick={() => onRetry(item.id)} className="p-1.5 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors" title="Réessayer"><RefreshCw size={13} /></button>
       )}
     </div>
   );
@@ -326,8 +306,6 @@ const AdminCoomerSearch = () => {
   const [running, setRunning] = useState(false);
   const [showQueue, setShowQueue] = useState(true);
   const abortRef = useRef(false);
-
-  // Multi-links state
   const [multiLinks, setMultiLinks] = useState("");
   const [addingLinks, setAddingLinks] = useState(false);
 
@@ -422,11 +400,9 @@ const AdminCoomerSearch = () => {
   }, []);
 
   const parseAndAddLinks = useCallback(async () => {
-    const lines = multiLinks
-      .replace(/\r/g, "")
-      .split(/[\n,]+/)
-      .map((l: string) => l.trim())
-      .filter(Boolean);
+    const lines = multiLinks.replace(/
+/g, "").split(/[
+,]+/).map((l: string) => l.trim()).filter(Boolean);
     if (!lines.length) return;
     setAddingLinks(true);
     const toAdd: CoomerCreator[] = [];
@@ -435,10 +411,9 @@ const AdminCoomerSearch = () => {
       if (m) {
         const svc = m[2].toLowerCase();
         const userId = m[3].trim();
-        const inQueue = queue.some((i) => i.creator.service === svc && i.creator.id === userId);
-        const inBatch = toAdd.some((c) => c.service === svc && c.id === userId);
-        if (!inQueue && !inBatch) {
-          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}` });
+        if (!queue.some((i) => i.creator.service === svc && i.creator.id === userId) &&
+            !toAdd.some((c) => c.service === svc && c.id === userId)) {
+          toAdd.push({ id: userId, name: userId, service: svc, profile_url: , profile_pic_url: , cover_url:  });
         }
       }
     }
@@ -446,7 +421,7 @@ const AdminCoomerSearch = () => {
       setQueue((prev) => [...prev, ...toAdd.map((creator) => ({ id: crypto.randomUUID(), creator, status: "pending" as QueueStatus }))]);
       setShowQueue(true);
       const dupes = lines.filter((l: string) => /coomer/i.test(l)).length - toAdd.length;
-      toast({ title: `${toAdd.length} créateur(s) ajouté(s)`, description: dupes > 0 ? `${dupes} doublon(s) ignoré(s)` : undefined });
+      toast({ title: , description: dupes > 0 ?  : undefined });
       setMultiLinks("");
     } else {
       toast({ title: "Aucun lien valide", description: "Format : https://coomer.st/onlyfans/user/xxx", variant: "destructive" });
@@ -456,50 +431,45 @@ const AdminCoomerSearch = () => {
 
   // ── Helpers : fetch coomer.st depuis le browser ─────────────
   const fetchCreatorVideos = useCallback(async (svc: string, creatorId: string, onProgress: (msg: string) => void) => {
-    const BASE = "https://coomer.st";
     const VIDEO_EXTS = ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"];
-    const isVideo = (name: string) => {
-      const ext = (name || "").split(".").pop()?.toLowerCase() || "";
-      return VIDEO_EXTS.includes(ext);
-    };
-
+    const isVideo = (name: string) => VIDEO_EXTS.includes((name || "").split(".").pop()?.toLowerCase() || "");
     const videos: any[] = [];
     let offset = 0;
     let pages = 0;
     onProgress("Récupération des posts…");
 
     while (pages < 200) {
-      const resp = await fetch(
-        `https://streamflex-proxy.hedydu30.workers.dev/api/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`,
-        {
-          headers: { Accept: "application/json" },
-          mode: "cors",
-          credentials: "omit",
-        },
-      );
-      if (!resp.ok) break;
-      const posts: any[] = await resp.json();
-      if (!Array.isArray(posts) || posts.length === 0) break;
+      // Via edge function Supabase — coomer.st bloque Cloudflare Workers sur /api/
+      let posts: any[] | null = null;
+      for (let att = 0; att < 8; att++) {
+        const { data, error } = await supabase.functions.invoke("coomer-import", {
+          body: { action: "fetch-posts", service: svc, creator_id: creatorId, offset },
+        });
+        if (error) {
+          const wait = Math.min(2000 * Math.pow(2, att), 30000);
+          onProgress(`Erreur edge — retry ${att + 1}...`);
+          await new Promise(r => setTimeout(r, wait));
+          continue;
+        }
+        if (data?.error === "rate_limit") {
+          const wait = Math.min(3000 * Math.pow(2, att), 60000);
+          onProgress(`Rate limit — pause ${Math.round(wait / 1000)}s...`);
+          await new Promise(r => setTimeout(r, wait));
+          continue;
+        }
+        posts = Array.isArray(data?.posts) ? data.posts : [];
+        break;
+      }
+
+      if (!posts || posts.length === 0) break;
 
       for (const post of posts) {
-        // Fichier principal
         if (post.file?.path && isVideo(post.file.name || post.file.path)) {
-          videos.push({
-            url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`,
-            title: post.title || post.file.name || "Vidéo",
-            thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`,
-            metadata: { service: svc, post_id: post.id, published: post.published },
-          });
+          videos.push({ url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`, title: post.title || post.file.name || "Vidéo", thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`, metadata: { service: svc, post_id: post.id, published: post.published } });
         }
-        // Pièces jointes
-        for (const att of post.attachments || []) {
-          if (att.path && isVideo(att.name || att.path)) {
-            videos.push({
-              url: `https://streamflex-proxy.hedydu30.workers.dev/data${att.path}`,
-              title: att.name || post.title || "Vidéo",
-              thumbnail_url: null,
-              metadata: { service: svc, post_id: post.id, published: post.published },
-            });
+        for (const a of post.attachments || []) {
+          if (a.path && isVideo(a.name || a.path)) {
+            videos.push({ url: `https://streamflex-proxy.hedydu30.workers.dev/data${a.path}`, title: a.name || post.title || "Vidéo", thumbnail_url: null, metadata: { service: svc, post_id: post.id, published: post.published } });
           }
         }
       }
@@ -508,11 +478,11 @@ const AdminCoomerSearch = () => {
       offset += 50;
       pages++;
       if (posts.length < 50) break;
+      await new Promise(r => setTimeout(r, 300));
     }
 
     return videos;
-  }, []);
-
+  }, [supabase]);
   // ── Run queue — browser fetch + edge function insert ─────────
   const runQueue = useCallback(async () => {
     if (running || !user) return;
@@ -530,101 +500,66 @@ const AdminCoomerSearch = () => {
       try {
         const { service, id: creatorId, name: creatorName } = item.creator;
 
-        // ── Étape 1 : browser fetch les posts depuis coomer.st via proxy ──
+        // ── Étape 1 : browser récupère les posts depuis coomer.st ──
+        let videosFound = 0;
+        const videos = await fetchCreatorVideos(service, creatorId, (msg) =>
+          setQueue((prev) =>
+            prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true, videos_found: videosFound } } : i)),
+          ),
+        );
+        videosFound = videos.length;
+
         setQueue((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true } } : i)),
+          prev.map((i) =>
+            i.id === item.id ? { ...i, progress: { fetching: false, videos_found: videos.length } } : i,
+          ),
         );
 
-        const VIDEO_EXTS = ["mp4", "webm", "mkv", "avi", "mov", "m4v", "wmv", "flv"];
-        const isVideo = (name: string) => VIDEO_EXTS.includes((name || "").split(".").pop()?.toLowerCase() || "");
-        const videos: any[] = [];
-        let offset = 0, pages = 0;
-
-        // Fetch avec retry automatique sur 429
-        const fetchPage = async (url: string, retries = 3): Promise<any[]> => {
-          for (let attempt = 0; attempt < retries; attempt++) {
-            if (abortRef.current) return [];
-            const resp = await fetch(url, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" });
-            if (resp.status === 429) {
-              // Rate limited — attendre avant retry (2s, 4s, 8s)
-              const delay = 2000 * Math.pow(2, attempt);
-              console.warn(`[coomer] 429 rate limit, retry dans ${delay}ms...`);
-              await new Promise(r => setTimeout(r, delay));
-              continue;
-            }
-            if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); return []; }
-            const raw = await resp.text();
-            if (!raw || raw.trimStart().startsWith("<")) return [];
-            const data = JSON.parse(raw);
-            return Array.isArray(data) ? data : [];
-          }
-          return [];
-        };
-
-        while (pages < 200) {
-          if (abortRef.current) break;
-          const url = `https://streamflex-proxy.hedydu30.workers.dev/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`;
-          const posts = await fetchPage(url);
-          if (!posts.length) break;
-
-          for (const post of posts) {
-            if (post.file?.path && isVideo(post.file.name || post.file.path)) {
-              videos.push({
-                url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`,
-                title: post.title || post.file.name || "Vidéo",
-                thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`,
-                model_name: creatorName,
-                metadata: { service, post_id: post.id, published: post.published },
-              });
-            }
-            for (const att of post.attachments || []) {
-              if (att.path && isVideo(att.name || att.path)) {
-                videos.push({
-                  url: `https://streamflex-proxy.hedydu30.workers.dev/data${att.path}`,
-                  title: att.name || post.title || "Vidéo",
-                  thumbnail_url: null,
-                  model_name: creatorName,
-                  metadata: { service, post_id: post.id, published: post.published },
-                });
-              }
-            }
-          }
-
+        if (videos.length === 0) {
           setQueue((prev) =>
-            prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: true, videos_found: videos.length } } : i)),
+            prev.map((i) =>
+              i.id === item.id
+                ? {
+                    ...i,
+                    status: "done",
+                    progress: { fetching: false, videos_found: 0, imported: 0, duplicates: 0, errors: 0 },
+                  }
+                : i,
+            ),
           );
-          offset += 50;
-          pages++;
-          if (posts.length < 50) break;
-          // Pause 300ms entre chaque page pour éviter le 429
-          await new Promise(r => setTimeout(r, 300));
+          toast({ title: `ℹ️ ${creatorName}`, description: "Aucune vidéo trouvée sur ce profil." });
+          continue;
         }
 
-        // ── Étape 2 : créer/mettre à jour le modèle avec photo de couverture ──
+        // ── Étape 2 : edge function insère en base (par chunks de 500) ──
+        let imported = 0,
+          duplicates = 0,
+          errors = 0;
+        const CHUNK = 500;
+        for (let i = 0; i < videos.length; i += CHUNK) {
+          if (abortRef.current) break;
+          const chunk = videos.slice(i, i + CHUNK);
+          const { data, error } = await supabase.functions.invoke("coomer-import?action=import-batch", {
+            body: {
+              videos: chunk.map((v) => ({ ...v, model_name: creatorName, source: "coomer" })),
+              creator_service: service,
+              creator_id: creatorId,
+              creator_name: creatorName,
+            },
+          });
+          if (error) {
+            errors += chunk.length;
+            continue;
+          }
+          imported += data?.imported || 0;
+          duplicates += data?.duplicates || 0;
+          errors += data?.errors || 0;
+        }
+
+        // ── Étape 3 : mettre à jour/créer le modèle ──
         await supabase.functions.invoke("coomer-import?action=import-creator", {
           body: { service, creator_id: creatorId, creator_name: creatorName, skip_fetch: true, cover_as_profile: true },
         });
-
-        // ── Étape 3 : insérer les vidéos par chunks via import-batch ──
-        setQueue((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, progress: { fetching: false, videos_found: videos.length } } : i)),
-        );
-
-        let imported = 0, duplicates = 0, errors = 0;
-        const CHUNK = 500;
-        for (let ci = 0; ci < videos.length; ci += CHUNK) {
-          if (abortRef.current) break;
-          const chunk = videos.slice(ci, ci + CHUNK);
-          const { data: batchData, error: batchErr } = await supabase.functions.invoke("coomer-import?action=import-batch", {
-            body: { videos: chunk },
-          });
-          if (batchErr) { errors += chunk.length; continue; }
-          imported += batchData?.imported || 0;
-          duplicates += batchData?.duplicates || 0;
-          errors += batchData?.errors || 0;
-        }
-
-        const videosFound = videos.length;
 
         setQueue((prev) =>
           prev.map((i) =>
@@ -632,7 +567,7 @@ const AdminCoomerSearch = () => {
               ? {
                   ...i,
                   status: "done",
-                  progress: { fetching: false, videos_found: videosFound, imported, duplicates, errors },
+                  progress: { fetching: false, videos_found: videos.length, imported, duplicates, errors },
                 }
               : i,
           ),
@@ -640,7 +575,7 @@ const AdminCoomerSearch = () => {
 
         toast({
           title: `✅ ${creatorName} importé`,
-          description: `${imported} nouvelle(s) · ${duplicates} doublon(s)${errors > 0 ? ` · ${errors} erreur(s)` : ''}`,
+          description: `${imported} vidéo(s) · ${duplicates} doublon(s)`,
         });
 
         queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -651,12 +586,12 @@ const AdminCoomerSearch = () => {
         );
       }
 
-      if (!abortRef.current) await new Promise((r) => setTimeout(r, 3000));
+      if (!abortRef.current) await new Promise((r) => setTimeout(r, 2000));
     }
 
     setRunning(false);
     abortRef.current = false;
-  }, [running, queue, user, toast, queryClient]);
+  }, [running, queue, user, toast, queryClient, fetchCreatorVideos, supabase]);
 
   const stopQueue = useCallback(() => {
     abortRef.current = true;
@@ -700,32 +635,24 @@ const AdminCoomerSearch = () => {
                   autoFocus
                 />
               </div>
-              {query && (
-                <button onClick={() => { setQuery(""); setResults([]); setHasSearched(false); setSearchError(null); }} className="absolute right-[116px] top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Effacer"><X size={14} /></button>
-              )}
+              {query && <button onClick={() => { setQuery(""); setResults([]); setHasSearched(false); setSearchError(null); }} className="absolute right-[116px] top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" title="Effacer"><X size={14} /></button>}
               <Button onClick={search} disabled={searching || query.trim().length < 2} className="h-10 px-5 gap-2">
                 {searching ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                 {searching ? "Recherche…" : "Rechercher"}
               </Button>
             </div>
 
-            {/* Zone multi-liens */}
+            {/* Multi-liens */}
             <div className="space-y-2 pt-1 border-t border-border/50">
-              <div className="flex items-center gap-1.5">
-                <Link2 size={12} className="text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Coller plusieurs liens coomer.st (un par ligne)</span>
-              </div>
-              <Textarea
-                value={multiLinks}
-                onChange={(e) => setMultiLinks(e.target.value)}
-                placeholder={"https://coomer.st/onlyfans/user/xxx\nhttps://coomer.st/fansly/user/yyy"}
-                className="text-xs min-h-[72px] resize-none font-mono"
-                rows={3}
-              />
+              <div className="flex items-center gap-1.5"><Link2 size={12} className="text-muted-foreground" /><span className="text-xs text-muted-foreground">Coller plusieurs liens (un par ligne)</span></div>
+              <Textarea value={multiLinks} onChange={(e) => setMultiLinks(e.target.value)} placeholder={"https://coomer.st/onlyfans/user/xxx
+https://coomer.st/fansly/user/yyy"} className="text-xs min-h-[72px] resize-none font-mono" rows={3} />
               {multiLinks.trim() && (
                 <Button size="sm" onClick={parseAndAddLinks} disabled={addingLinks} className="w-full gap-2 h-8">
                   {addingLinks ? <Loader2 size={13} className="animate-spin" /> : <ShoppingCart size={13} />}
-                  Ajouter à la file ({multiLinks.replace(/\r/g,"").split(/[\n,]+/).filter((l: string) => /coomer/i.test(l)).length} lien(s))
+                  Ajouter à la file ({multiLinks.replace(/
+/g,"").split(/[
+,]+/).filter((l: string) => /coomer/i.test(l)).length} lien(s))
                 </Button>
               )}
             </div>
