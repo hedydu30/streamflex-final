@@ -257,12 +257,10 @@ const QueueRow = ({
         {/* Progress / error */}
         {item.status === "running" && item.progress && (
           <p className="text-xs text-muted-foreground mt-0.5">
-            {item.progress.retrying
-              ? <span className="text-yellow-400">⏳ Rate limit — retry {item.progress.retrying}…</span>
-              : item.progress.fetching
-                ? item.progress.videos_found
-                  ? `${item.progress.videos_found} vidéo(s)…`
-                  : "Récupération des posts…"
+            {item.progress.fetching
+              ? "Récupération des posts…"
+              : item.progress.videos_found !== undefined
+                ? `${item.progress.videos_found} vidéo(s) trouvée(s)…`
                 : "Insertion en base…"}
           </p>
         )}
@@ -542,54 +540,32 @@ const AdminCoomerSearch = () => {
         const videos: any[] = [];
         let offset = 0, pages = 0;
 
-        // Fetch via edge function Supabase (seule méthode qui bypass le blocage coomer.st)
-        // L'edge function est en eu-west-3 et n'est pas bloquée par coomer.st
-        const fetchPostsViaEdge = async (svc: string, uid: string, off: number): Promise<any[] | null> => {
-          for (let attempt = 0; attempt < 8; attempt++) {
-            if (abortRef.current) return null;
-            try {
-              const { data, error } = await supabase.functions.invoke("coomer-import", {
-                body: { action: "fetch-posts", service: svc, creator_id: uid, offset: off },
-              });
-              if (error) {
-                const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
-                console.warn(`[coomer] edge error attempt=${attempt+1} delay=${delay}ms:`, error.message);
-                setQueue((prev) => prev.map((i) => i.id === item.id
-                  ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
-                  : i
-                ));
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-              }
-              if (data?.error === "html_response") return [];
-              if (data?.status === 429) {
-                const delay = Math.min(3000 * Math.pow(2, attempt), 60000);
-                console.warn(`[coomer] 429 via edge attempt=${attempt+1} delay=${delay}ms`);
-                setQueue((prev) => prev.map((i) => i.id === item.id
-                  ? { ...i, progress: { fetching: true, videos_found: videos.length, retrying: attempt + 1 } }
-                  : i
-                ));
-                await new Promise(r => setTimeout(r, delay));
-                continue;
-              }
-              if (data?.status && data.status >= 400) {
-                console.warn(`[coomer] coomer HTTP ${data.status} — arrêt`);
-                return null;
-              }
-              return Array.isArray(data?.posts) ? data.posts : [];
-            } catch (e: any) {
-              const delay = Math.min(2000 * Math.pow(2, attempt), 30000);
-              console.warn(`[coomer] exception attempt=${attempt+1}:`, e.message);
+        // Fetch avec retry automatique sur 429
+        const fetchPage = async (url: string, retries = 3): Promise<any[]> => {
+          for (let attempt = 0; attempt < retries; attempt++) {
+            if (abortRef.current) return [];
+            const resp = await fetch(url, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" });
+            if (resp.status === 429) {
+              // Rate limited — attendre avant retry (2s, 4s, 8s)
+              const delay = 2000 * Math.pow(2, attempt);
+              console.warn(`[coomer] 429 rate limit, retry dans ${delay}ms...`);
               await new Promise(r => setTimeout(r, delay));
+              continue;
             }
+            if (!resp.ok) { console.warn("[coomer] non-ok:", resp.status); return []; }
+            const raw = await resp.text();
+            if (!raw || raw.trimStart().startsWith("<")) return [];
+            const data = JSON.parse(raw);
+            return Array.isArray(data) ? data : [];
           }
-          return null;
+          return [];
         };
 
         while (pages < 200) {
           if (abortRef.current) break;
-          const posts = await fetchPostsViaEdge(service, creatorId, offset);
-          if (!posts || !posts.length) break;
+          const url = `https://streamflex-proxy.hedydu30.workers.dev/api/${service}/user/${encodeURIComponent(creatorId)}/posts?o=${offset}`;
+          const posts = await fetchPage(url);
+          if (!posts.length) break;
 
           for (const post of posts) {
             if (post.file?.path && isVideo(post.file.name || post.file.path)) {
@@ -620,8 +596,8 @@ const AdminCoomerSearch = () => {
           offset += 50;
           pages++;
           if (posts.length < 50) break;
-          // Pause 500ms entre pages pour respecter le rate limit
-          await new Promise(r => setTimeout(r, 500));
+          // Pause 300ms entre chaque page pour éviter le 429
+          await new Promise(r => setTimeout(r, 300));
         }
 
         // ── Étape 2 : créer/mettre à jour le modèle avec photo de couverture ──
