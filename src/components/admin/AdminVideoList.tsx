@@ -32,6 +32,25 @@ const formatDuration = (seconds: number | null) => {
 const AdminVideoList = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [deduping, setDeduping] = useState(false);
+
+  const runDedup = async () => {
+    setDeduping(true);
+    const { data, error } = await supabase.functions.invoke("coomer-import", {
+      body: { action: "dedup-videos" },
+    });
+    setDeduping(false);
+    if (error) {
+      toast({ title: "Erreur", description: error.message, variant: "destructive" });
+      return;
+    }
+    if (data?.deleted === 0) {
+      toast({ title: "✅ Aucun doublon", description: "Toutes les vidéos sont uniques." });
+    } else {
+      toast({ title: `🗑️ ${data.deleted} doublon(s) supprimé(s)`, description: `Sur ${data.total_checked} vidéos analysées.` });
+      queryClient.invalidateQueries({ queryKey: ["imported-videos"] });
+    }
+  };
   const queryClient = useQueryClient();
   const { data: videos = [], isLoading } = useImportedVideos();
 
@@ -167,6 +186,17 @@ const AdminVideoList = () => {
         <div className="flex items-center gap-2 flex-wrap">
           <Button size="sm" onClick={() => setShowForm(true)} className="gap-1">
             <Plus size={14} /> Ajouter une vidéo
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={runDedup}
+            disabled={deduping}
+            className="gap-1 border-destructive/50 text-destructive hover:bg-destructive/10"
+            title="Analyser toutes les vidéos et supprimer les doublons"
+          >
+            {deduping ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+            {deduping ? "Analyse..." : "Supprimer doublons"}
           </Button>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
