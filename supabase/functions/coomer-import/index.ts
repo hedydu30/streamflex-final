@@ -53,6 +53,72 @@ serve(async (req) => {
     };
 
     switch (action) {
+      case "dedup-videos": {
+        // Trouve et supprime les doublons dans imported_videos
+        // Garde le plus ancien (first inserted) pour chaque original_url
+        console.log("[dedup] Début nettoyage doublons...");
+
+        // 1. Trouver les original_url en doublon
+        const { data: allVideos, error: fetchErr } = await supabase
+          .from("imported_videos")
+          .select("id, original_url, created_at, download_url")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true });
+
+        if (fetchErr) {
+          return new Response(JSON.stringify({ error: fetchErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // 2. Grouper par original_url, garder le premier
+        const seen = new Map<string, string>(); // url → id à garder
+        const toDelete: string[] = [];
+
+        // Aussi détecter les doublons par chemin fichier (download_url sans host)
+        const seenPaths = new Map<string, string>();
+
+        for (const v of allVideos || []) {
+          const key = v.original_url;
+          // Extraire chemin depuis download_url pour détecter doublons cross-worker
+          let pathKey = key;
+          try {
+            const u = new URL(v.download_url || "");
+            pathKey = u.pathname;
+          } catch {}
+
+          if (seen.has(key) || seenPaths.has(pathKey)) {
+            toDelete.push(v.id);
+          } else {
+            seen.set(key, v.id);
+            seenPaths.set(pathKey, v.id);
+          }
+        }
+
+        if (toDelete.length === 0) {
+          return new Response(JSON.stringify({ success: true, deleted: 0, message: "Aucun doublon trouvé" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // 3. Supprimer par batches de 500
+        let deleted = 0;
+        for (let i = 0; i < toDelete.length; i += 500) {
+          const batch = toDelete.slice(i, i + 500);
+          const { error: delErr } = await supabase
+            .from("imported_videos")
+            .delete()
+            .in("id", batch)
+            .eq("user_id", user.id);
+          if (!delErr) deleted += batch.length;
+        }
+
+        console.log(`[dedup] Supprimé ${deleted} doublons`);
+        return new Response(JSON.stringify({ success: true, deleted, total_checked: allVideos?.length || 0 }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       case "fetch-posts": {
         const { service: fpSvc, creator_id: fpId, offset: fpOffset = 0 } = body;
         if (!fpSvc || !fpId) {
@@ -422,16 +488,24 @@ serve(async (req) => {
 
         for (let i = 0; i < videos.length; i += CHUNK_SIZE) {
           const chunk = videos.slice(i, i + CHUNK_SIZE);
-          const rows = chunk.map((v: any) => ({
-            user_id: user.id,
-            source: v.source || "coomer",
-            title: v.title || "Vidéo",
-            original_url: v.url,
-            download_url: v.url,
-            thumbnail_url: v.thumbnail_url || null,
-            metadata: v.metadata || {},
-            model_id: v.model_name ? modelIdMap.get(v.model_name.toLowerCase()) || null : null,
-          }));
+          const rows = chunk.map((v: any) => {
+            // Extraire le chemin relatif du fichier pour déduplication stable
+            // ex: https://worker.dev/data/abc/file.mp4 → /data/abc/file.mp4
+            const urlObj = (() => { try { return new URL(v.url); } catch { return null; } })();
+            const filePath = urlObj ? urlObj.pathname : v.url;
+            // Clé de dédup : user_id + chemin fichier (indépendant du worker utilisé)
+            const dedupKey = `coomer:${filePath}`;
+            return {
+              user_id: user.id,
+              source: v.source || "coomer",
+              title: v.title || "Vidéo",
+              original_url: dedupKey,   // Clé stable pour dédup
+              download_url: v.url,      // URL réelle avec le worker actuel
+              thumbnail_url: v.thumbnail_url || null,
+              metadata: { ...(v.metadata || {}), file_path: filePath },
+              model_id: v.model_name ? modelIdMap.get(v.model_name.toLowerCase()) || null : null,
+            };
+          });
 
           // ET ICI AUSSI
           const { data: imported, error: insertError } = await supabase
