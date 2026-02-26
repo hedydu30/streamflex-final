@@ -54,67 +54,72 @@ serve(async (req) => {
 
     switch (action) {
       case "dedup-videos": {
-        // Trouve et supprime les doublons dans imported_videos
-        // Garde le plus ancien (first inserted) pour chaque original_url
         console.log("[dedup] Début nettoyage doublons...");
 
-        // 1. Trouver les original_url en doublon
-        const { data: allVideos, error: fetchErr } = await supabase
-          .from("imported_videos")
-          .select("id, original_url, created_at, download_url")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: true });
-
-        if (fetchErr) {
-          return new Response(JSON.stringify({ error: fetchErr.message }), {
-            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-
-        // 2. Grouper par original_url, garder le premier
-        const seen = new Map<string, string>(); // url → id à garder
-        const toDelete: string[] = [];
-
-        // Aussi détecter les doublons par chemin fichier (download_url sans host)
+        // Paginer pour éviter le timeout (1000 par page)
+        const PAGE = 1000;
+        let page = 0;
+        const seen = new Map<string, string>();
         const seenPaths = new Map<string, string>();
+        const toDelete: string[] = [];
+        let totalChecked = 0;
 
-        for (const v of allVideos || []) {
-          const key = v.original_url;
-          // Extraire chemin depuis download_url pour détecter doublons cross-worker
-          let pathKey = key;
-          try {
-            const u = new URL(v.download_url || "");
-            pathKey = u.pathname;
-          } catch {}
+        while (true) {
+          const { data: batch, error: fetchErr } = await supabase
+            .from("imported_videos")
+            .select("id, original_url, download_url")
+            .eq("user_id", user.id)
+            .order("imported_at", { ascending: true })
+            .range(page * PAGE, (page + 1) * PAGE - 1);
 
-          if (seen.has(key) || seenPaths.has(pathKey)) {
-            toDelete.push(v.id);
-          } else {
-            seen.set(key, v.id);
-            seenPaths.set(pathKey, v.id);
+          if (fetchErr) {
+            return new Response(JSON.stringify({ error: fetchErr.message }), {
+              status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
           }
+          if (!batch || batch.length === 0) break;
+
+          for (const v of batch) {
+            totalChecked++;
+            const key = v.original_url || "";
+            let pathKey = key;
+            try {
+              const u = new URL(v.download_url || "");
+              pathKey = u.pathname;
+            } catch {}
+
+            if (seen.has(key) || (pathKey && pathKey !== key && seenPaths.has(pathKey))) {
+              toDelete.push(v.id);
+            } else {
+              if (key) seen.set(key, v.id);
+              if (pathKey) seenPaths.set(pathKey, v.id);
+            }
+          }
+
+          if (batch.length < PAGE) break;
+          page++;
         }
 
         if (toDelete.length === 0) {
-          return new Response(JSON.stringify({ success: true, deleted: 0, message: "Aucun doublon trouvé" }), {
+          return new Response(JSON.stringify({ success: true, deleted: 0, total_checked: totalChecked, message: "Aucun doublon trouvé" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
-        // 3. Supprimer par batches de 500
+        // Supprimer par batches de 500
         let deleted = 0;
         for (let i = 0; i < toDelete.length; i += 500) {
-          const batch = toDelete.slice(i, i + 500);
+          const chunk = toDelete.slice(i, i + 500);
           const { error: delErr } = await supabase
             .from("imported_videos")
             .delete()
-            .in("id", batch)
+            .in("id", chunk)
             .eq("user_id", user.id);
-          if (!delErr) deleted += batch.length;
+          if (!delErr) deleted += chunk.length;
         }
 
-        console.log(`[dedup] Supprimé ${deleted} doublons`);
-        return new Response(JSON.stringify({ success: true, deleted, total_checked: allVideos?.length || 0 }), {
+        console.log(`[dedup] Supprimé ${deleted}/${toDelete.length} doublons sur ${totalChecked} vidéos`);
+        return new Response(JSON.stringify({ success: true, deleted, total_checked: totalChecked }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
