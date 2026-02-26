@@ -331,8 +331,8 @@ const AdminCoomerSearch = () => {
         indexed: undefined,
         updated: undefined,
         profile_url: `https://coomer.st/${svc}/user/${userId}`,
-        profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`,
-        cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}`,
+        profile_pic_url: `https://shy-silence-1613.hedydu30.workers.dev/img/icons/${svc}/${userId}`,
+        cover_url: `https://shy-silence-1613.hedydu30.workers.dev/img/banners/${svc}/${userId}`,
       });
     } else {
       // Username sans URL → créer une entrée pour OnlyFans par défaut
@@ -346,8 +346,8 @@ const AdminCoomerSearch = () => {
           indexed: undefined,
           updated: undefined,
           profile_url: `https://coomer.st/${svc}/user/${q}`,
-          profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${q}`,
-          cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${q}`,
+          profile_pic_url: `https://shy-silence-1613.hedydu30.workers.dev/img/icons/${svc}/${q}`,
+          cover_url: `https://shy-silence-1613.hedydu30.workers.dev/img/banners/${svc}/${q}`,
         });
       }
     }
@@ -411,7 +411,7 @@ const AdminCoomerSearch = () => {
         const userId = m[3].trim();
         if (!queue.some((i) => i.creator.service === svc && i.creator.id === userId) &&
             !toAdd.some((c) => c.service === svc && c.id === userId)) {
-          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://streamflex-proxy.hedydu30.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://streamflex-proxy.hedydu30.workers.dev/img/banners/${svc}/${userId}` });
+          toAdd.push({ id: userId, name: userId, service: svc, profile_url: `https://coomer.st/${svc}/user/${userId}`, profile_pic_url: `https://shy-silence-1613.hedydu30.workers.dev/img/icons/${svc}/${userId}`, cover_url: `https://shy-silence-1613.hedydu30.workers.dev/img/banners/${svc}/${userId}` });
         }
       }
     }
@@ -436,38 +436,57 @@ const AdminCoomerSearch = () => {
     let pages = 0;
     onProgress("Récupération des posts…");
 
-    while (pages < 200) {
-      // Via edge function Supabase — coomer.st bloque Cloudflare Workers sur /api/
-      let posts: any[] | null = null;
-      for (let att = 0; att < 8; att++) {
-        const { data, error } = await supabase.functions.invoke("coomer-import", {
-          body: { action: "fetch-posts", service: svc, creator_id: creatorId, offset },
-        });
-        if (error) {
-          const wait = Math.min(2000 * Math.pow(2, att), 30000);
-          onProgress(`Erreur edge — retry ${att + 1}...`);
-          await new Promise(r => setTimeout(r, wait));
-          continue;
-        }
-        if (data?.error === "rate_limit") {
-          const wait = Math.min(3000 * Math.pow(2, att), 60000);
-          onProgress(`Rate limit — pause ${Math.round(wait / 1000)}s...`);
-          await new Promise(r => setTimeout(r, wait));
-          continue;
-        }
-        posts = Array.isArray(data?.posts) ? data.posts : [];
-        break;
-      }
+    // Essayer les deux workers dans l'ordre
+    const WORKERS = ["https://shy-silence-1613.hedydu30.workers.dev", "https://shy-silence-1613.hedydu30.workers.dev"];
 
+    const fetchPage = async (off: number): Promise<any[] | null> => {
+      for (const worker of WORKERS) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const url = `${worker}/api/${svc}/user/${encodeURIComponent(creatorId)}/posts?o=${off}`;
+          try {
+            const resp = await fetch(url, { headers: { Accept: "application/json" }, mode: "cors", credentials: "omit" });
+            if (resp.status === 429) {
+              const wait = Math.min(3000 * Math.pow(2, attempt), 30000);
+              onProgress(`Rate limit — pause ${Math.round(wait / 1000)}s...`);
+              await new Promise(r => setTimeout(r, wait));
+              continue;
+            }
+            if (resp.status === 403 || resp.status === 0) break; // Ce worker bloque, essayer le suivant
+            if (!resp.ok) return null;
+            const raw = await resp.text();
+            if (!raw || raw.trimStart().startsWith("<")) break;
+            const data = JSON.parse(raw);
+            return Array.isArray(data) ? data : [];
+          } catch (e: any) {
+            if (e?.message?.includes("Failed to fetch") || e?.message?.includes("CORS")) break;
+            const wait = Math.min(2000 * Math.pow(2, attempt), 20000);
+            await new Promise(r => setTimeout(r, wait));
+          }
+        }
+      }
+      // Fallback : edge function Supabase
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data, error } = await supabase.functions.invoke("coomer-import", {
+          body: { action: "fetch-posts", service: svc, creator_id: creatorId, offset: off },
+        });
+        if (error) { await new Promise(r => setTimeout(r, 3000)); continue; }
+        if (data?.error === "rate_limit") { await new Promise(r => setTimeout(r, 10000)); continue; }
+        return Array.isArray(data?.posts) ? data.posts : null;
+      }
+      return null;
+    };
+
+    while (pages < 200) {
+      const posts = await fetchPage(offset);
       if (!posts || posts.length === 0) break;
 
       for (const post of posts) {
         if (post.file?.path && isVideo(post.file.name || post.file.path)) {
-          videos.push({ url: `https://streamflex-proxy.hedydu30.workers.dev/data${post.file.path}`, title: post.title || post.file.name || "Vidéo", thumbnail_url: `https://streamflex-proxy.hedydu30.workers.dev/thumbnail${post.file.path}`, metadata: { service: svc, post_id: post.id, published: post.published } });
+          videos.push({ url: `https://shy-silence-1613.hedydu30.workers.dev/data${post.file.path}`, title: post.title || post.file.name || "Vidéo", thumbnail_url: `https://shy-silence-1613.hedydu30.workers.dev/thumbnail${post.file.path}`, metadata: { service: svc, post_id: post.id, published: post.published } });
         }
         for (const a of post.attachments || []) {
           if (a.path && isVideo(a.name || a.path)) {
-            videos.push({ url: `https://streamflex-proxy.hedydu30.workers.dev/data${a.path}`, title: a.name || post.title || "Vidéo", thumbnail_url: null, metadata: { service: svc, post_id: post.id, published: post.published } });
+            videos.push({ url: `https://shy-silence-1613.hedydu30.workers.dev/data${a.path}`, title: a.name || post.title || "Vidéo", thumbnail_url: null, metadata: { service: svc, post_id: post.id, published: post.published } });
           }
         }
       }
@@ -476,7 +495,7 @@ const AdminCoomerSearch = () => {
       offset += 50;
       pages++;
       if (posts.length < 50) break;
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 400));
     }
 
     return videos;
