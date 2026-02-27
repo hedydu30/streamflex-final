@@ -29,8 +29,7 @@ export const useImportedVideosProgress = (): LoadingProgress => {
   return progress;
 };
 
-const BATCH = 1000;
-const COLS = "id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id";
+const BATCH_SIZE = 500;
 
 export const useImportedVideos = () => {
   const { user } = useAuth();
@@ -40,48 +39,41 @@ export const useImportedVideos = () => {
   return useQuery({
     queryKey,
     queryFn: async () => {
-      // Count
-      let countQ = supabase.from("imported_videos").select("*", { count: "exact", head: true }).eq("is_active", true);
-      if (user) countQ = countQ.eq("user_id", user.id);
-      const { count } = await countQ;
-      const total = count ?? 0;
+      let countQuery = supabase
+        .from("imported_videos")
+        .select("*", { count: "exact", head: true })
+        .eq("is_active", true);
+      if (user) countQuery = countQuery.eq("user_id", user.id);
+      const { count } = await countQuery;
+      const total = count ?? null;
       notifyProgress({ loaded: 0, total, percent: 0, done: false });
 
-      if (total === 0) {
-        notifyProgress({ loaded: 0, total: 0, percent: 100, done: true });
-        return [];
-      }
-
-      const all: any[] = [];
+      let all: any[] = [];
       let from = 0;
+      let hasMore = true;
 
-      while (from < total) {
-        // 5 requêtes en parallèle de 1000 chacune
-        const batch = [];
-        for (let i = 0; i < 5 && from + i * BATCH < total; i++) {
-          const start = from + i * BATCH;
-          let q = supabase
-            .from("imported_videos")
-            .select(COLS)
-            .eq("is_active", true)
-            .order("imported_at", { ascending: false })
-            .range(start, start + BATCH - 1);
-          if (user) q = q.eq("user_id", user.id);
-          batch.push(q);
+      while (hasMore) {
+        let query = supabase
+          .from("imported_videos")
+          .select("id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id")
+          .eq("is_active", true)
+          .order("imported_at", { ascending: false })
+          .range(from, from + BATCH_SIZE - 1);
+        if (user) query = query.eq("user_id", user.id);
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          all = [...all, ...data];
+          from += BATCH_SIZE;
+          const pct = total ? Math.min(100, Math.round((all.length / total) * 100)) : 0;
+          notifyProgress({ loaded: all.length, total, percent: pct, done: false });
+          queryClient.setQueryData(queryKey, [...all]);
+          if (data.length < BATCH_SIZE) hasMore = false;
+        } else {
+          hasMore = false;
         }
-
-        const results = await Promise.all(batch);
-        let received = 0;
-        for (const { data, error } of results) {
-          if (error) throw error;
-          if (data) { all.push(...data); received += data.length; }
-        }
-        from += 5 * BATCH;
-
-        notifyProgress({ loaded: all.length, total, percent: Math.min(100, Math.round(all.length / total * 100)), done: false });
-        queryClient.setQueryData(queryKey, [...all]);
-
-        if (received < batch.length * BATCH) break;
       }
 
       notifyProgress({ loaded: all.length, total: all.length, percent: 100, done: true });
