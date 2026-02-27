@@ -1,61 +1,154 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- TODO: Set the document title to the name of your application -->
-    <title>StreamFlex</title>
-    <meta name="description" content="Streamflix" />
-    <meta name="author" content="Lovable" />
-    <link rel="preload" as="image" href="/hero-banner.jpg" fetchpriority="high" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap"
-      media="print"
-      onload="this.media='all'"
-    />
-    <noscript
-      ><link
-        rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap"
-    /></noscript>
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 
-    <!-- TODO: Update og:title to match your application name -->
+interface ThemeColors {
+  background: string; foreground: string; primary: string;
+  "primary-foreground": string; secondary: string; "secondary-foreground": string;
+  card: string; "card-foreground": string; accent: string; "accent-foreground": string;
+  muted: string; "muted-foreground": string; border: string;
+}
+interface Theme {
+  id: string; name: string; description: string | null;
+  colors: ThemeColors; is_default: boolean; is_active: boolean;
+}
+interface ThemeContextType {
+  themes: Theme[]; currentTheme: Theme | null;
+  setTheme: (themeId: string) => Promise<void>;
+  refreshThemes: () => Promise<void | any>;
+}
 
-    <meta property="og:type" content="website" />
-    <meta
-      property="og:image"
-      content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/272b4eaf-a71b-46fb-a504-75892c76003f/id-preview-c1562857--9f02b2a7-8a43-4dc8-a448-2b0687180178.lovable.app-1771031385733.png"
-    />
+const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@Lovable" />
-    <meta
-      name="twitter:image"
-      content="https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/272b4eaf-a71b-46fb-a504-75892c76003f/id-preview-c1562857--9f02b2a7-8a43-4dc8-a448-2b0687180178.lovable.app-1771031385733.png"
-    />
-    <meta property="og:title" content="StreamFlex" />
-    <meta name="twitter:title" content="StreamFlex" />
-    <meta property="og:description" content="Streamflex" />
-    <meta name="twitter:description" content="Streamflex" />
+const THEME_VARS = ["background","foreground","primary","primary-foreground","secondary",
+  "secondary-foreground","card","card-foreground","accent","accent-foreground","muted",
+  "muted-foreground","border"] as const;
 
-    <!-- Anti-flash thème : applique les couleurs avant React -->
-    <script>
-      try {
-        var c = localStorage.getItem("sf_theme");
-        if (c) {
-          var colors = JSON.parse(c);
-          var r = document.documentElement;
-          for (var k in colors) { if (colors[k]) r.style.setProperty("--" + k, colors[k]); }
-        }
-      } catch(e) {}
-    </script>
-  </head>
+const CACHE_KEY = "sf_theme";
 
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
+// Applique un set de couleurs d'un coup sur le DOM + sauvegarde dans localStorage
+function applyAndCache(colors: Record<string, string>) {
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries(colors)) {
+    if (v) root.style.setProperty(`--${k}`, v);
+  }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(colors)); } catch {}
+}
+
+function buildColors(themeColors: ThemeColors | null, customColors: Record<string, string> | null): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  if (themeColors) {
+    for (const key of THEME_VARS) {
+      if (themeColors[key]) result[key] = themeColors[key];
+    }
+    if (themeColors.primary) {
+      result["ring"] = themeColors.primary;
+      result["netflix-red"] = themeColors.primary;
+      result["input"] = themeColors.border || "";
+      result["popover"] = themeColors.card || "";
+      result["popover-foreground"] = themeColors["card-foreground"] || "";
+      result["destructive-foreground"] = themeColors["primary-foreground"] || "";
+      result["sidebar-background"] = themeColors.background || "";
+      result["sidebar-foreground"] = themeColors["secondary-foreground"] || "";
+      result["sidebar-primary"] = themeColors.primary;
+      result["sidebar-primary-foreground"] = themeColors["primary-foreground"] || "";
+      result["sidebar-accent"] = themeColors.secondary || "";
+      result["sidebar-accent-foreground"] = themeColors["accent-foreground"] || "";
+      result["sidebar-border"] = themeColors.border || "";
+      result["sidebar-ring"] = themeColors.primary;
+    }
+  }
+
+  // customColors écrase tout (appliqués en dernier = priorité max)
+  if (customColors) {
+    for (const [k, v] of Object.entries(customColors)) {
+      if (v) result[k] = v;
+    }
+  }
+
+  return result;
+}
+
+export const ThemeProvider = ({ children }: { children: ReactNode }) => {
+  const { user } = useAuth();
+  const [themes, setThemes] = useState<Theme[]>([]);
+  const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
+
+  const fetchThemes = async () => {
+    const { data } = await supabase.from("themes").select("*")
+      .eq("is_active", true).order("is_default", { ascending: false });
+    if (data) setThemes(data as unknown as Theme[]);
+    return data as unknown as Theme[] | null;
+  };
+
+  const loadAndApply = async () => {
+    // Tout fetch en PARALLÈLE — une seule application finale = zéro flash
+    const [profileRes, themesRes, customColorsRes, watermarkRes] = await Promise.all([
+      user
+        ? supabase.from("profiles").select("selected_theme_id").eq("user_id", user.id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase.from("themes").select("*").eq("is_active", true).order("is_default", { ascending: false }),
+      supabase.from("site_settings").select("value").eq("key", "custom_site_colors").maybeSingle(),
+      supabase.from("site_settings").select("value").eq("key", "video").maybeSingle(),
+    ]);
+
+    // Thèmes
+    const allThemes = (themesRes.data as unknown as Theme[]) || [];
+    setThemes(allThemes);
+
+    // Thème sélectionné
+    let theme: Theme | null = null;
+    if (user) {
+      const selectedId = (profileRes.data as any)?.selected_theme_id;
+      theme = selectedId
+        ? allThemes.find((t) => t.id === selectedId) || null
+        : allThemes.find((t) => t.is_default) || null;
+    } else {
+      theme = allThemes.find((t) => t.is_default) || null;
+    }
+    setCurrentTheme(theme);
+
+    // Couleurs custom
+    const customColors = customColorsRes.data?.value && typeof customColorsRes.data.value === "object"
+      ? customColorsRes.data.value as Record<string, string>
+      : null;
+
+    // Fusionner et appliquer UNE SEULE FOIS
+    const finalColors = buildColors(theme?.colors || null, customColors);
+    applyAndCache(finalColors);
+
+    // Watermark
+    try {
+      (window as any).__sf_watermark = watermarkRes.data?.value
+        ? (watermarkRes.data.value as any).show_watermark !== false
+        : true;
+    } catch { (window as any).__sf_watermark = true; }
+  };
+
+  useEffect(() => { loadAndApply(); }, [user]);
+
+  const setTheme = async (themeId: string) => {
+    if (!user) return;
+    const theme = themes.find((t) => t.id === themeId);
+    if (!theme) return;
+    await supabase.from("profiles").update({ selected_theme_id: themeId } as any).eq("user_id", user.id);
+    setCurrentTheme(theme);
+    // Recharger avec les custom colors pour garder la fusion
+    const { data: cc } = await supabase.from("site_settings").select("value").eq("key", "custom_site_colors").maybeSingle();
+    const customColors = cc?.value && typeof cc.value === "object" ? cc.value as Record<string, string> : null;
+    applyAndCache(buildColors(theme.colors, customColors));
+  };
+
+  return (
+    <ThemeContext.Provider value={{ themes, currentTheme, setTheme, refreshThemes: fetchThemes }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+export const useTheme = () => {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
+  return ctx;
+};
