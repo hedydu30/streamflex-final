@@ -3,91 +3,71 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface ThemeColors {
-  background: string;
-  foreground: string;
-  primary: string;
-  "primary-foreground": string;
-  secondary: string;
-  "secondary-foreground": string;
-  card: string;
-  "card-foreground": string;
-  accent: string;
-  "accent-foreground": string;
-  muted: string;
-  "muted-foreground": string;
-  border: string;
+  background: string; foreground: string; primary: string;
+  "primary-foreground": string; secondary: string; "secondary-foreground": string;
+  card: string; "card-foreground": string; accent: string; "accent-foreground": string;
+  muted: string; "muted-foreground": string; border: string;
 }
-
 interface Theme {
-  id: string;
-  name: string;
-  description: string | null;
-  colors: ThemeColors;
-  is_default: boolean;
-  is_active: boolean;
+  id: string; name: string; description: string | null;
+  colors: ThemeColors; is_default: boolean; is_active: boolean;
 }
-
 interface ThemeContextType {
-  themes: Theme[];
-  currentTheme: Theme | null;
+  themes: Theme[]; currentTheme: Theme | null;
   setTheme: (themeId: string) => Promise<void>;
   refreshThemes: () => Promise<void | any>;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-const THEME_VARS: (keyof ThemeColors)[] = [
-  "background", "foreground", "primary", "primary-foreground",
-  "secondary", "secondary-foreground", "card", "card-foreground",
-  "accent", "accent-foreground", "muted", "muted-foreground", "border",
-];
+const THEME_VARS = ["background","foreground","primary","primary-foreground","secondary",
+  "secondary-foreground","card","card-foreground","accent","accent-foreground","muted",
+  "muted-foreground","border"] as const;
 
 const CACHE_KEY = "sf_theme";
 
-function applyColors(colors: Record<string, string>) {
+// Applique un set de couleurs d'un coup sur le DOM + sauvegarde dans localStorage
+function applyAndCache(colors: Record<string, string>) {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(colors)) {
     if (v) root.style.setProperty(`--${k}`, v);
   }
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(colors)); } catch {}
 }
 
-function buildFullColors(colors: ThemeColors): Record<string, string> {
+function buildColors(themeColors: ThemeColors | null, customColors: Record<string, string> | null): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const key of THEME_VARS) {
-    if (colors[key]) result[key] = colors[key];
+
+  if (themeColors) {
+    for (const key of THEME_VARS) {
+      if (themeColors[key]) result[key] = themeColors[key];
+    }
+    if (themeColors.primary) {
+      result["ring"] = themeColors.primary;
+      result["netflix-red"] = themeColors.primary;
+      result["input"] = themeColors.border || "";
+      result["popover"] = themeColors.card || "";
+      result["popover-foreground"] = themeColors["card-foreground"] || "";
+      result["destructive-foreground"] = themeColors["primary-foreground"] || "";
+      result["sidebar-background"] = themeColors.background || "";
+      result["sidebar-foreground"] = themeColors["secondary-foreground"] || "";
+      result["sidebar-primary"] = themeColors.primary;
+      result["sidebar-primary-foreground"] = themeColors["primary-foreground"] || "";
+      result["sidebar-accent"] = themeColors.secondary || "";
+      result["sidebar-accent-foreground"] = themeColors["accent-foreground"] || "";
+      result["sidebar-border"] = themeColors.border || "";
+      result["sidebar-ring"] = themeColors.primary;
+    }
   }
-  if (colors.primary) {
-    result["ring"] = colors.primary;
-    result["netflix-red"] = colors.primary;
-    result["input"] = colors.border || "";
-    result["popover"] = colors.card || "";
-    result["popover-foreground"] = colors["card-foreground"] || "";
-    result["destructive-foreground"] = colors["primary-foreground"] || "";
-    result["sidebar-background"] = colors.background || "";
-    result["sidebar-foreground"] = colors["secondary-foreground"] || "";
-    result["sidebar-primary"] = colors.primary;
-    result["sidebar-primary-foreground"] = colors["primary-foreground"] || "";
-    result["sidebar-accent"] = colors.secondary || "";
-    result["sidebar-accent-foreground"] = colors["accent-foreground"] || "";
-    result["sidebar-border"] = colors.border || "";
-    result["sidebar-ring"] = colors.primary;
+
+  // customColors écrase tout (appliqués en dernier = priorité max)
+  if (customColors) {
+    for (const [k, v] of Object.entries(customColors)) {
+      if (v) result[k] = v;
+    }
   }
+
   return result;
-}
-
-function applyThemeToDOM(colors: ThemeColors) {
-  const full = buildFullColors(colors);
-  applyColors(full);
-  // Sauvegarder pour le prochain chargement
-  try { localStorage.setItem(CACHE_KEY, JSON.stringify(full)); } catch {}
-}
-
-function clearThemeFromDOM() {
-  const root = document.documentElement;
-  const vars = [...THEME_VARS, "ring","netflix-red","input","popover","popover-foreground",
-    "destructive-foreground","sidebar-background","sidebar-foreground","sidebar-primary",
-    "sidebar-primary-foreground","sidebar-accent","sidebar-accent-foreground","sidebar-border","sidebar-ring"];
-  for (const key of vars) root.style.removeProperty(`--${key}`);
 }
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
@@ -96,71 +76,57 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [currentTheme, setCurrentTheme] = useState<Theme | null>(null);
 
   const fetchThemes = async () => {
-    const { data } = await supabase
-      .from("themes")
-      .select("*")
-      .eq("is_active", true)
-      .order("is_default", { ascending: false });
+    const { data } = await supabase.from("themes").select("*")
+      .eq("is_active", true).order("is_default", { ascending: false });
     if (data) setThemes(data as unknown as Theme[]);
     return data as unknown as Theme[] | null;
   };
 
-  const loadGlobalColors = async () => {
-    const { data } = await supabase
-      .from("site_settings")
-      .select("value")
-      .eq("key", "custom_site_colors")
-      .maybeSingle();
-    if (data?.value && typeof data.value === "object") {
-      const colors = data.value as Record<string, string>;
-      applyColors(colors);
-      // Merge dans le cache
-      try {
-        const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ ...cached, ...colors }));
-      } catch {}
-      return colors;
+  const loadAndApply = async () => {
+    // Tout fetch en PARALLÈLE — une seule application finale = zéro flash
+    const [profileRes, themesRes, customColorsRes, watermarkRes] = await Promise.all([
+      user
+        ? supabase.from("profiles").select("selected_theme_id").eq("user_id", user.id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase.from("themes").select("*").eq("is_active", true).order("is_default", { ascending: false }),
+      supabase.from("site_settings").select("value").eq("key", "custom_site_colors").maybeSingle(),
+      supabase.from("site_settings").select("value").eq("key", "video").maybeSingle(),
+    ]);
+
+    // Thèmes
+    const allThemes = (themesRes.data as unknown as Theme[]) || [];
+    setThemes(allThemes);
+
+    // Thème sélectionné
+    let theme: Theme | null = null;
+    if (user) {
+      const selectedId = (profileRes.data as any)?.selected_theme_id;
+      theme = selectedId
+        ? allThemes.find((t) => t.id === selectedId) || null
+        : allThemes.find((t) => t.is_default) || null;
+    } else {
+      theme = allThemes.find((t) => t.is_default) || null;
     }
-    return null;
-  };
+    setCurrentTheme(theme);
 
-  const loadUserTheme = async () => {
-    if (!user) {
-      setCurrentTheme(null);
-      clearThemeFromDOM();
-      await loadGlobalColors();
-      return;
-    }
+    // Couleurs custom
+    const customColors = customColorsRes.data?.value && typeof customColorsRes.data.value === "object"
+      ? customColorsRes.data.value as Record<string, string>
+      : null;
 
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("selected_theme_id")
-      .eq("user_id", user.id)
-      .maybeSingle();
+    // Fusionner et appliquer UNE SEULE FOIS
+    const finalColors = buildColors(theme?.colors || null, customColors);
+    applyAndCache(finalColors);
 
-    const allThemes = await fetchThemes();
-    if (!allThemes) { await loadGlobalColors(); return; }
-
-    const selectedId = (profile as any)?.selected_theme_id;
-    const theme = selectedId
-      ? allThemes.find((t) => t.id === selectedId)
-      : allThemes.find((t) => t.is_default);
-
-    if (theme) {
-      setCurrentTheme(theme);
-      applyThemeToDOM(theme.colors);
-    }
-
-    await loadGlobalColors();
-
-    // Sync watermark
+    // Watermark
     try {
-      const { data: ws } = await supabase.from("site_settings").select("value").eq("key", "video").maybeSingle();
-      (window as any).__sf_watermark = ws?.value ? (ws.value as any).show_watermark !== false : true;
+      (window as any).__sf_watermark = watermarkRes.data?.value
+        ? (watermarkRes.data.value as any).show_watermark !== false
+        : true;
     } catch { (window as any).__sf_watermark = true; }
   };
 
-  useEffect(() => { loadUserTheme(); }, [user]);
+  useEffect(() => { loadAndApply(); }, [user]);
 
   const setTheme = async (themeId: string) => {
     if (!user) return;
@@ -168,7 +134,10 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     if (!theme) return;
     await supabase.from("profiles").update({ selected_theme_id: themeId } as any).eq("user_id", user.id);
     setCurrentTheme(theme);
-    applyThemeToDOM(theme.colors);
+    // Recharger avec les custom colors pour garder la fusion
+    const { data: cc } = await supabase.from("site_settings").select("value").eq("key", "custom_site_colors").maybeSingle();
+    const customColors = cc?.value && typeof cc.value === "object" ? cc.value as Record<string, string> : null;
+    applyAndCache(buildColors(theme.colors, customColors));
   };
 
   return (
@@ -179,7 +148,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 };
 
 export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) throw new Error("useTheme must be used within ThemeProvider");
-  return context;
+  const ctx = useContext(ThemeContext);
+  if (!ctx) throw new Error("useTheme must be used within ThemeProvider");
+  return ctx;
 };
