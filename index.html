@@ -41,20 +41,16 @@
     <meta property="og:description" content="Streamflex" />
     <meta name="twitter:description" content="Streamflex" />
 
-    <!-- Anti-flash : applique les couleurs du thème avant que React se charge -->
+    <!-- Anti-flash thème : applique les couleurs avant React -->
     <script>
-      (function() {
-        try {
-          var c = localStorage.getItem('streamflex_theme_colors');
-          if (c) {
-            var colors = JSON.parse(c);
-            var root = document.documentElement;
-            for (var k in colors) {
-              if (colors[k]) root.style.setProperty('--' + k, colors[k]);
-            }
-          }
-        } catch(e) {}
-      })();
+      try {
+        var c = localStorage.getItem("sf_theme");
+        if (c) {
+          var colors = JSON.parse(c);
+          var r = document.documentElement;
+          for (var k in colors) { if (colors[k]) r.style.setProperty("--" + k, colors[k]); }
+        }
+      } catch(e) {}
     </script>
   </head>
 

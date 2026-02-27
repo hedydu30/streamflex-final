@@ -42,76 +42,52 @@ const THEME_VARS: (keyof ThemeColors)[] = [
   "accent", "accent-foreground", "muted", "muted-foreground", "border",
 ];
 
-const THEME_CACHE_KEY = "streamflex_theme_colors";
+const CACHE_KEY = "sf_theme";
 
-// Appliquer les couleurs IMMÉDIATEMENT depuis le cache au démarrage (évite le flash)
-(function initThemeFromCache() {
-  try {
-    const cached = localStorage.getItem(THEME_CACHE_KEY);
-    if (cached) {
-      const colors = JSON.parse(cached) as Record<string, string>;
-      const root = document.documentElement;
-      for (const [k, v] of Object.entries(colors)) {
-        if (v) root.style.setProperty(`--${k}`, v);
-      }
-    }
-  } catch {}
-})();
-
-function applyThemeToDOM(colors: ThemeColors, save = true) {
+function applyColors(colors: Record<string, string>) {
   const root = document.documentElement;
+  for (const [k, v] of Object.entries(colors)) {
+    if (v) root.style.setProperty(`--${k}`, v);
+  }
+}
+
+function buildFullColors(colors: ThemeColors): Record<string, string> {
+  const result: Record<string, string> = {};
   for (const key of THEME_VARS) {
-    if (colors[key]) {
-      root.style.setProperty(`--${key}`, colors[key]);
-    }
+    if (colors[key]) result[key] = colors[key];
   }
-  // Also set derived vars
   if (colors.primary) {
-    root.style.setProperty("--ring", colors.primary);
-    root.style.setProperty("--netflix-red", colors.primary);
-    root.style.setProperty("--input", colors.border || "");
-    root.style.setProperty("--popover", colors.card || "");
-    root.style.setProperty("--popover-foreground", colors["card-foreground"] || "");
-    root.style.setProperty("--destructive-foreground", colors["primary-foreground"] || "");
-    root.style.setProperty("--sidebar-background", colors.background || "");
-    root.style.setProperty("--sidebar-foreground", colors["secondary-foreground"] || "");
-    root.style.setProperty("--sidebar-primary", colors.primary);
-    root.style.setProperty("--sidebar-primary-foreground", colors["primary-foreground"] || "");
-    root.style.setProperty("--sidebar-accent", colors.secondary || "");
-    root.style.setProperty("--sidebar-accent-foreground", colors["accent-foreground"] || "");
-    root.style.setProperty("--sidebar-border", colors.border || "");
-    root.style.setProperty("--sidebar-ring", colors.primary);
+    result["ring"] = colors.primary;
+    result["netflix-red"] = colors.primary;
+    result["input"] = colors.border || "";
+    result["popover"] = colors.card || "";
+    result["popover-foreground"] = colors["card-foreground"] || "";
+    result["destructive-foreground"] = colors["primary-foreground"] || "";
+    result["sidebar-background"] = colors.background || "";
+    result["sidebar-foreground"] = colors["secondary-foreground"] || "";
+    result["sidebar-primary"] = colors.primary;
+    result["sidebar-primary-foreground"] = colors["primary-foreground"] || "";
+    result["sidebar-accent"] = colors.secondary || "";
+    result["sidebar-accent-foreground"] = colors["accent-foreground"] || "";
+    result["sidebar-border"] = colors.border || "";
+    result["sidebar-ring"] = colors.primary;
   }
-  // Sauvegarder dans localStorage pour éviter le flash au prochain chargement
-  if (save) {
-    try {
-      const allVars: Record<string, string> = {};
-      for (const key of THEME_VARS) { if (colors[key]) allVars[key] = colors[key]; }
-      if (colors.primary) {
-        allVars["ring"] = colors.primary;
-        allVars["netflix-red"] = colors.primary;
-        allVars["input"] = colors.border || "";
-        allVars["popover"] = colors.card || "";
-        allVars["popover-foreground"] = colors["card-foreground"] || "";
-        allVars["sidebar-primary"] = colors.primary;
-        allVars["sidebar-background"] = colors.background || "";
-        allVars["sidebar-foreground"] = colors["secondary-foreground"] || "";
-      }
-      localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(allVars));
-    } catch {}
-  }
+  return result;
+}
+
+function applyThemeToDOM(colors: ThemeColors) {
+  const full = buildFullColors(colors);
+  applyColors(full);
+  // Sauvegarder pour le prochain chargement
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify(full)); } catch {}
 }
 
 function clearThemeFromDOM() {
   const root = document.documentElement;
-  const allVars = [
-    ...THEME_VARS, "ring", "netflix-red", "input", "popover", "popover-foreground",
-    "destructive-foreground", "sidebar-background", "sidebar-foreground", "sidebar-primary",
-    "sidebar-primary-foreground", "sidebar-accent", "sidebar-accent-foreground", "sidebar-border", "sidebar-ring",
-  ];
-  for (const key of allVars) {
-    root.style.removeProperty(`--${key}`);
-  }
+  const vars = [...THEME_VARS, "ring","netflix-red","input","popover","popover-foreground",
+    "destructive-foreground","sidebar-background","sidebar-foreground","sidebar-primary",
+    "sidebar-primary-foreground","sidebar-accent","sidebar-accent-foreground","sidebar-border","sidebar-ring"];
+  for (const key of vars) root.style.removeProperty(`--${key}`);
 }
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
@@ -129,20 +105,20 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     return data as unknown as Theme[] | null;
   };
 
-  // Load global custom colors from site_settings (applies to ALL users, overrides themes)
   const loadGlobalColors = async () => {
     const { data } = await supabase
       .from("site_settings")
       .select("value")
       .eq("key", "custom_site_colors")
       .maybeSingle();
-
     if (data?.value && typeof data.value === "object") {
       const colors = data.value as Record<string, string>;
-      const root = document.documentElement;
-      for (const [key, val] of Object.entries(colors)) {
-        if (val) root.style.setProperty(`--${key}`, val);
-      }
+      applyColors(colors);
+      // Merge dans le cache
+      try {
+        const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ ...cached, ...colors }));
+      } catch {}
       return colors;
     }
     return null;
@@ -150,7 +126,6 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
   const loadUserTheme = async () => {
     if (!user) {
-      // Clear user theme, but apply global colors for guests
       setCurrentTheme(null);
       clearThemeFromDOM();
       await loadGlobalColors();
@@ -164,10 +139,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       .maybeSingle();
 
     const allThemes = await fetchThemes();
-    if (!allThemes) {
-      await loadGlobalColors();
-      return;
-    }
+    if (!allThemes) { await loadGlobalColors(); return; }
 
     const selectedId = (profile as any)?.selected_theme_id;
     const theme = selectedId
@@ -179,34 +151,22 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       applyThemeToDOM(theme.colors);
     }
 
-    // Global admin colors ALWAYS override theme colors (applied last = highest priority)
     await loadGlobalColors();
 
-    // Sync watermark setting
+    // Sync watermark
     try {
       const { data: ws } = await supabase.from("site_settings").select("value").eq("key", "video").maybeSingle();
-      if (ws?.value && typeof ws.value === "object") {
-        (window as any).__sf_watermark = (ws.value as any).show_watermark !== false;
-      } else {
-        (window as any).__sf_watermark = true;
-      }
+      (window as any).__sf_watermark = ws?.value ? (ws.value as any).show_watermark !== false : true;
     } catch { (window as any).__sf_watermark = true; }
   };
 
-  useEffect(() => {
-    loadUserTheme();
-  }, [user]);
+  useEffect(() => { loadUserTheme(); }, [user]);
 
   const setTheme = async (themeId: string) => {
     if (!user) return;
     const theme = themes.find((t) => t.id === themeId);
     if (!theme) return;
-
-    await supabase
-      .from("profiles")
-      .update({ selected_theme_id: themeId } as any)
-      .eq("user_id", user.id);
-
+    await supabase.from("profiles").update({ selected_theme_id: themeId } as any).eq("user_id", user.id);
     setCurrentTheme(theme);
     applyThemeToDOM(theme.colors);
   };

@@ -1,5 +1,4 @@
-import { Play,
- useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,8 +7,10 @@ import {
   saveSiteSetting,
   DEFAULT_CMS,
   DEFAULT_GENERAL,
+  DEFAULT_VIDEO,
   type CmsSettings,
   type GeneralSettings,
+  type VideoSettings,
 } from "@/hooks/useSiteSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
