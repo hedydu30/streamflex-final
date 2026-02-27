@@ -809,7 +809,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       </div>
 
       {/* Dynamic watermark — désactivable depuis Admin > CMS > Lecteur vidéo */}
-      {user && videoSettings.show_watermark !== false && (
+      {user && videoSettings.show_watermark === true && (
         <div className="absolute inset-0 z-10 pointer-events-none select-none overflow-hidden">
           <div
             className="absolute text-white/15 text-sm font-medium tracking-wider"

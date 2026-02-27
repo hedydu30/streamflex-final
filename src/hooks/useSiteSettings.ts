@@ -111,7 +111,7 @@ export const DEFAULT_VIDEO: VideoSettings = {
   default_volume: 80,
   preload_strategy: "metadata",
   hls_enabled: false,
-  show_watermark: true,
+  show_watermark: false,
 };
 
 // ── Query key ─────────────────────────────────────────────────
