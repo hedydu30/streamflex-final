@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { refreshVideoToken } from "@/lib/secure-video";
 import { usePlayerSettings, getPlayerStyles } from "@/hooks/usePlayerSettings";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
@@ -46,6 +47,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const playerNavigate = useNavigate();
   const { user } = useAuth();
+  const { video: videoSettings } = useSiteSettings();
   const { toast } = useToast();
   const { isFavorite, toggleFavorite } = useVideoFavorites();
   const { logEvent } = useActivityLog();
@@ -806,8 +808,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       </div>
 
-      {/* Dynamic watermark */}
-      {user && (
+      {/* Dynamic watermark — conditionnel selon réglage admin */}
+      {user && videoSettings.show_watermark !== false && (
         <div className="absolute inset-0 z-10 pointer-events-none select-none overflow-hidden">
           <div
             className="absolute text-white/15 text-sm font-medium tracking-wider"

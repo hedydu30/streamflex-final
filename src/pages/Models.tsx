@@ -288,30 +288,34 @@ const ModelGridCard = ({
           !imgSrc ? `${palette.border} ring-0 border` : "ring-border/30 group-hover:ring-primary/60",
         )}
       >
-        {imgSrc ? (
-          <img
-            src={imgSrc}
-            alt={model.name}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            loading="lazy"
-            onError={() => setImgError(true)}
-          />
-        ) : (
-          <div
-            className={cn(
-              "w-full h-full flex flex-col items-center justify-center bg-gradient-to-br p-4",
-              palette.from,
-              palette.to,
-            )}
-          >
+        {/* Background gradient always shown */}
+        <div
+          className={cn(
+            "w-full h-full flex flex-col items-center justify-center bg-gradient-to-br",
+            palette.from,
+            palette.to,
+          )}
+        >
+          {imgSrc ? (
+            /* Circular photo centered in card */
+            <div className="w-3/4 aspect-square rounded-full overflow-hidden ring-4 ring-white/20 shadow-xl shadow-black/50 flex-shrink-0">
+              <img
+                src={imgSrc}
+                alt={model.name}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                onError={() => setImgError(true)}
+              />
+            </div>
+          ) : (
             <span
               className={cn("text-4xl md:text-5xl font-bold font-cyber tracking-wider", palette.text)}
               style={{ textShadow: "0 0 20px currentColor" }}
             >
               {nameAbbrev}
             </span>
-          </div>
-        )}
+          )}
+        </div>
         {firstVideoId && <VideoCardPreview videoId={firstVideoId} isHovered={hovered} />}
 
         {/* Favorite heart button */}
@@ -500,10 +504,10 @@ const Models = () => {
       };
     });
 
-    return result.sort((a, b) => b.videoCount - a.videoCount);
+    return result.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   }, [videos, modelProfiles]);
 
-  const [modelSort, setModelSort] = useSessionState<"name_asc" | "name_desc" | "count">("models_sort", "count");
+  const [modelSort, setModelSort] = useSessionState<"name_asc" | "name_desc" | "count">("models_sort", "name_asc");
 
   const filtered = useMemo(() => {
     let result = search.trim()

@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Plus,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -163,6 +164,56 @@ const AdminModels = () => {
   const [newName, setNewName] = useState("");
   const [newImageUrl, setNewImageUrl] = useState("");
   const [creating, setCreating] = useState(false);
+
+  // Réanalyse des jaquettes
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [reanalyzeProgress, setReanalyzeProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const reanalyzeModels = async () => {
+    if (!user) return;
+    setReanalyzing(true);
+
+    // Récupérer tous les modèles sans photo de profil OU les réanalyser tous
+    const { data: allModels } = await supabase
+      .from("models")
+      .select("id, name, source_platform, profile_image_url")
+      .eq("user_id", user.id);
+
+    if (!allModels || allModels.length === 0) {
+      setReanalyzing(false);
+      return;
+    }
+
+    setReanalyzeProgress({ done: 0, total: allModels.length });
+    let updated = 0;
+
+    for (let i = 0; i < allModels.length; i++) {
+      const m = allModels[i];
+      // Déduire la plateforme depuis source_platform ou essayer onlyfans par défaut
+      const platform = m.source_platform && m.source_platform !== "custom" ? m.source_platform : "onlyfans";
+      const coomerUrl = `https://img.coomer.st/icons/${platform}/${encodeURIComponent(m.name)}`;
+
+      // Vérifier si l'URL coomer retourne une image valide
+      try {
+        const res = await fetch(coomerUrl, { method: "HEAD" });
+        if (res.ok && res.headers.get("content-type")?.startsWith("image")) {
+          await supabase
+            .from("models")
+            .update({ profile_image_url: coomerUrl } as any)
+            .eq("id", m.id);
+          updated++;
+        }
+      } catch {
+        // Ignore les erreurs réseau
+      }
+      setReanalyzeProgress({ done: i + 1, total: allModels.length });
+    }
+
+    setReanalyzing(false);
+    setReanalyzeProgress(null);
+    await fetchModels();
+    toast({ title: `${updated} jaquette(s) mise(s) à jour sur ${allModels.length} modèles` });
+  };
 
   // Delete progress state
   const [deleteProgress, setDeleteProgress] = useState<{
@@ -534,6 +585,21 @@ const AdminModels = () => {
               disabled={!!deleteProgress}
             >
               <Trash2 size={14} /> <span className="hidden sm:inline">Tout supprimer</span> ({models.length})
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={reanalyzeModels}
+              disabled={reanalyzing || !!deleteProgress}
+              className="gap-1 flex-1 sm:flex-none"
+              title="Réanalyser les photos de profil depuis coomer.st"
+            >
+              {reanalyzing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              <span className="hidden sm:inline">
+                {reanalyzing && reanalyzeProgress
+                  ? `${reanalyzeProgress.done}/${reanalyzeProgress.total}`
+                  : "Réanalyser"}
+              </span>
             </Button>
             <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1 flex-1 sm:flex-none">
               <Plus size={14} /> <span className="hidden sm:inline">Nouveau</span>

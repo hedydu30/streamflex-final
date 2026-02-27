@@ -42,7 +42,23 @@ const THEME_VARS: (keyof ThemeColors)[] = [
   "accent", "accent-foreground", "muted", "muted-foreground", "border",
 ];
 
-function applyThemeToDOM(colors: ThemeColors) {
+const THEME_CACHE_KEY = "streamflex_theme_colors";
+
+// Appliquer les couleurs IMMÉDIATEMENT depuis le cache au démarrage (évite le flash)
+(function initThemeFromCache() {
+  try {
+    const cached = localStorage.getItem(THEME_CACHE_KEY);
+    if (cached) {
+      const colors = JSON.parse(cached) as Record<string, string>;
+      const root = document.documentElement;
+      for (const [k, v] of Object.entries(colors)) {
+        if (v) root.style.setProperty(`--${k}`, v);
+      }
+    }
+  } catch {}
+})();
+
+function applyThemeToDOM(colors: ThemeColors, save = true) {
   const root = document.documentElement;
   for (const key of THEME_VARS) {
     if (colors[key]) {
@@ -65,6 +81,24 @@ function applyThemeToDOM(colors: ThemeColors) {
     root.style.setProperty("--sidebar-accent-foreground", colors["accent-foreground"] || "");
     root.style.setProperty("--sidebar-border", colors.border || "");
     root.style.setProperty("--sidebar-ring", colors.primary);
+  }
+  // Sauvegarder dans localStorage pour éviter le flash au prochain chargement
+  if (save) {
+    try {
+      const allVars: Record<string, string> = {};
+      for (const key of THEME_VARS) { if (colors[key]) allVars[key] = colors[key]; }
+      if (colors.primary) {
+        allVars["ring"] = colors.primary;
+        allVars["netflix-red"] = colors.primary;
+        allVars["input"] = colors.border || "";
+        allVars["popover"] = colors.card || "";
+        allVars["popover-foreground"] = colors["card-foreground"] || "";
+        allVars["sidebar-primary"] = colors.primary;
+        allVars["sidebar-background"] = colors.background || "";
+        allVars["sidebar-foreground"] = colors["secondary-foreground"] || "";
+      }
+      localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(allVars));
+    } catch {}
   }
 }
 

@@ -58,6 +58,7 @@ export interface VideoSettings {
   default_volume: number;
   preload_strategy: "none" | "metadata" | "auto";
   hls_enabled: boolean;
+  show_watermark: boolean;
 }
 
 export type AllSettings = {
@@ -110,6 +111,7 @@ export const DEFAULT_VIDEO: VideoSettings = {
   default_volume: 80,
   preload_strategy: "metadata",
   hls_enabled: false,
+  show_watermark: true,
 };
 
 // ── Query key ─────────────────────────────────────────────────
