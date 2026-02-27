@@ -35,10 +35,9 @@ export const useImportedVideosProgress = (): LoadingProgress => {
   return progress;
 };
 
-// BATCH_SIZE augmenté pour réduire le nombre de requêtes (430k vidéos)
-const BATCH_SIZE = 5000;
-// Nombre de requêtes en parallèle
-const PARALLEL = 4;
+// BATCH_SIZE = 1000 (limite Supabase) avec fetch parallèle x5 pour accélérer
+const BATCH_SIZE = 1000;
+const PARALLEL = 5;
 
 const COLS = "id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id";
 
@@ -65,17 +64,11 @@ export const useImportedVideos = () => {
         return [];
       }
 
-      // 2. Construire la liste de tous les offsets à charger
-      const offsets: number[] = [];
-      for (let off = 0; off < total; off += BATCH_SIZE) {
-        offsets.push(off);
-      }
+      // 2. Fetch en parallèle par groupes de PARALLEL
+      const all: any[] = [];
+      let offset = 0;
 
-      // 3. Fetch en parallèle par groupes de PARALLEL
-      const all: any[] = new Array(total);
-      let loaded = 0;
-
-      const fetchBatch = async (from: number): Promise<any[]> => {
+      const fetchPage = async (from: number): Promise<any[]> => {
         let q = supabase
           .from("imported_videos")
           .select(COLS)
@@ -88,27 +81,34 @@ export const useImportedVideos = () => {
         return data || [];
       };
 
-      // Traiter les offsets par groupes de PARALLEL
-      for (let i = 0; i < offsets.length; i += PARALLEL) {
-        const group = offsets.slice(i, i + PARALLEL);
-        const results = await Promise.all(group.map(fetchBatch));
-        for (let j = 0; j < results.length; j++) {
-          const off = group[j];
-          const rows = results[j];
-          for (let k = 0; k < rows.length; k++) {
-            all[off + k] = rows[k];
-          }
-          loaded += rows.length;
+      while (offset < total) {
+        // Lancer PARALLEL requêtes simultanées
+        const offsets: number[] = [];
+        for (let i = 0; i < PARALLEL && offset + i * BATCH_SIZE < total; i++) {
+          offsets.push(offset + i * BATCH_SIZE);
         }
-        const pct = Math.min(100, Math.round((loaded / total) * 100));
-        notifyProgress({ loaded, total, percent: pct, done: false });
+
+        const results = await Promise.all(offsets.map(fetchPage));
+        let batchLoaded = 0;
+        for (const rows of results) {
+          all.push(...rows);
+          batchLoaded += rows.length;
+        }
+
+        offset += PARALLEL * BATCH_SIZE;
+
+        const pct = Math.min(100, Math.round((all.length / total) * 100));
+        notifyProgress({ loaded: all.length, total, percent: pct, done: false });
+
         // Mise à jour progressive du cache
-        queryClient.setQueryData(queryKey, all.filter(Boolean));
+        queryClient.setQueryData(queryKey, [...all]);
+
+        // Si un batch est incomplet, on a tout récupéré
+        if (batchLoaded < offsets.length * BATCH_SIZE) break;
       }
 
-      const final = all.filter(Boolean);
-      notifyProgress({ loaded: final.length, total: final.length, percent: 100, done: true });
-      return final;
+      notifyProgress({ loaded: all.length, total: all.length, percent: 100, done: true });
+      return all;
     },
     enabled: true,
     staleTime: 30 * 60 * 1000,
