@@ -181,6 +181,16 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
 
     // Global admin colors ALWAYS override theme colors (applied last = highest priority)
     await loadGlobalColors();
+
+    // Sync watermark setting
+    try {
+      const { data: ws } = await supabase.from("site_settings").select("value").eq("key", "video").maybeSingle();
+      if (ws?.value && typeof ws.value === "object") {
+        (window as any).__sf_watermark = (ws.value as any).show_watermark !== false;
+      } else {
+        (window as any).__sf_watermark = true;
+      }
+    } catch { (window as any).__sf_watermark = true; }
   };
 
   useEffect(() => {
