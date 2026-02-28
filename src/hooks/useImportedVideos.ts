@@ -55,7 +55,7 @@ export const useImportedVideos = () => {
       while (hasMore) {
         let query = supabase
           .from("imported_videos")
-          .select("id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id")
+          .select("id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id,metadata")
           .eq("is_active", true)
           .order("imported_at", { ascending: false })
           .range(from, from + BATCH_SIZE - 1);
