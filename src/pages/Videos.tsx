@@ -22,6 +22,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { CardContextMenu, videoContextMenuItems } from "@/components/CardContextMenu";
 
 type SortKey = "title_asc" | "title_desc" | "date_new" | "date_old" | "duration_long" | "duration_short" | "size_big" | "size_small";
 type TabKey = "all" | "favorites" | "watched";
@@ -82,6 +83,7 @@ const VideoCard = ({ video, liked, percent, posSeconds, onNavigate, onPlay, onTo
   const titleAbbrev = (video.title || "V").substring(0, 3).toUpperCase();
 
   return (
+    <CardContextMenu items={videoContextMenuItems(video.id, video.title)}>
     <div className="group cursor-pointer relative"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}>
@@ -219,8 +221,9 @@ const VideoCard = ({ video, liked, percent, posSeconds, onNavigate, onPlay, onTo
         </div>
       </div>
     </div>
+    </CardContextMenu>
   );
-};
+};;
 
 const Videos = () => {
   const { user } = useAuth();
