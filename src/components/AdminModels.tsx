@@ -232,12 +232,22 @@ const AdminModels = () => {
     if (!user) return;
     setLoading(true);
 
-    // Une seule requête — pas de boucle sur les vidéos
-    const { data: modelsData } = await supabase
-      .from("models")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("name");
+    // Paginer les modèles (limite Supabase = 1000 rows par requête)
+    let modelsData: any[] = [];
+    let mFrom = 0;
+    let mHasMore = true;
+    while (mHasMore) {
+      const { data: mBatch } = await supabase
+        .from("models")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("name")
+        .range(mFrom, mFrom + 999);
+      if (!mBatch || mBatch.length === 0) { mHasMore = false; break; }
+      modelsData = [...modelsData, ...mBatch];
+      mFrom += 1000;
+      if (mBatch.length < 1000) mHasMore = false;
+    }
 
     const rows: ModelRow[] = (modelsData || []).map((m: any) => ({
       ...m,

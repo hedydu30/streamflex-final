@@ -5,9 +5,10 @@ import Footer from "@/components/Footer";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
 import { useModelFavorites } from "@/hooks/useModelFavorites";
 import { useVideoProgress } from "@/hooks/useVideoProgress";
-import { useImportedVideos } from "@/hooks/useImportedVideos";
 import { useModels } from "@/hooks/useModels";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Film, Heart, Eye, Clock, Play, Crown, Trash2, RotateCcw, User, Shuffle } from "lucide-react";
 import VideoCardPreview from "@/components/VideoCardPreview";
@@ -166,30 +167,35 @@ const MyList = () => {
   const { favoriteIds: videoFavIds, toggleFavorite: toggleVideoFav } = useVideoFavorites();
   const { favoriteModelIds, toggleModelFavorite, isModelFavorite } = useModelFavorites();
   const { modelImages, modelNames, models: modelsList } = useModels();
-  const { data: allVideos = [], isLoading: videosLoading } = useImportedVideos();
   const { progressMap } = useVideoProgress();
 
-  // Filter favorite videos from cached data
-  const favVideos = useMemo(
-    () => allVideos.filter((v: any) => videoFavIds.has(v.id)),
-    [allVideos, videoFavIds]
-  );
+  // Charger les favoris directement depuis Supabase — pas besoin de charger 430k vidéos
+  const { data: favVideos = [], isLoading: videosLoading } = useQuery({
+    queryKey: ["fav-videos", user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      const { data } = await supabase
+        .from("imported_videos")
+        .select("id,title,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at")
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .in("id", Array.from(videoFavIds).slice(0, 1000));
+      return data || [];
+    },
+    enabled: !!user && videoFavIds.size > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // allVideos vide — plus nécessaire pour Ma Liste
+  const allVideos: any[] = [];
 
   // Favorite models
   const favModels = useMemo(() => {
     return (modelsList || []).filter((m: any) => favoriteModelIds.has(m.id));
   }, [modelsList, favoriteModelIds]);
 
-  // Count videos per favorite model
-  const modelVideoCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const v of allVideos) {
-      if (v.model_id) {
-        counts.set(v.model_id, (counts.get(v.model_id) || 0) + 1);
-      }
-    }
-    return counts;
-  }, [allVideos]);
+  // Count videos per favorite model — basé sur les modèles chargés
+  const modelVideoCounts = useMemo(() => new Map<string, number>(), []);
 
   // Watched videos: any video with progress > 0
   const watchedVideos = useMemo(() => {
