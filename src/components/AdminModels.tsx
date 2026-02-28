@@ -232,40 +232,61 @@ const AdminModels = () => {
     if (!user) return;
     setLoading(true);
 
-    // Fetch all models
-    const modelsRes = await supabase.from("models").select("*").eq("user_id", user.id).order("name");
-
-    // Fetch ALL videos (paginate beyond 1000 limit) to get accurate counts
-    let allVideos: any[] = [];
-    let from = 0;
-    const batchSize = 1000;
-    let hasMore = true;
-    while (hasMore) {
-      const { data, error } = await supabase
+    // Fetch models + video counts en parallèle via RPC count groupé
+    const [modelsRes, countsRes, thumbsRes] = await Promise.all([
+      supabase.from("models").select("*").eq("user_id", user.id).order("name"),
+      // Count videos par model_id directement en SQL
+      supabase.rpc("count_videos_by_model", { p_user_id: user.id }).then(
+        (res: any) => res,
+        // fallback si la fonction RPC n'existe pas
+        () => ({ data: null, error: true })
+      ),
+      // Juste la première thumbnail par modèle (limite 1000 — suffisant)
+      supabase
         .from("imported_videos")
-        .select("id, model_id, thumbnail_url")
+        .select("model_id, thumbnail_url")
         .eq("user_id", user.id)
         .eq("is_active", true)
-        .range(from, from + batchSize - 1);
-      if (error || !data || data.length === 0) {
-        hasMore = false;
-        break;
-      }
-      allVideos = [...allVideos, ...data];
-      from += batchSize;
-      if (data.length < batchSize) hasMore = false;
-    }
+        .not("thumbnail_url", "is", null)
+        .not("model_id", "is", null)
+        .limit(1000),
+    ]);
 
-    const videoCountMap = new Map<string, number>();
     const firstThumbMap = new Map<string, string>();
-    allVideos.forEach((v: any) => {
-      if (v.model_id) {
-        videoCountMap.set(v.model_id, (videoCountMap.get(v.model_id) || 0) + 1);
-        if (v.thumbnail_url && !firstThumbMap.has(v.model_id)) {
-          firstThumbMap.set(v.model_id, v.thumbnail_url);
-        }
+    (thumbsRes.data || []).forEach((v: any) => {
+      if (v.model_id && v.thumbnail_url && !firstThumbMap.has(v.model_id)) {
+        firstThumbMap.set(v.model_id, v.thumbnail_url);
       }
     });
+
+    // Construire la map de counts
+    const videoCountMap = new Map<string, number>();
+
+    if (!countsRes.error && countsRes.data) {
+      // RPC disponible
+      (countsRes.data as any[]).forEach((row: any) => {
+        if (row.model_id && row.count) videoCountMap.set(row.model_id, Number(row.count));
+      });
+    } else {
+      // Fallback : count par batch de 1000 mais seulement model_id + count
+      let from = 0;
+      let hasMore = true;
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("imported_videos")
+          .select("model_id")
+          .eq("user_id", user.id)
+          .eq("is_active", true)
+          .not("model_id", "is", null)
+          .range(from, from + 999);
+        if (error || !data || data.length === 0) { hasMore = false; break; }
+        data.forEach((v: any) => {
+          if (v.model_id) videoCountMap.set(v.model_id, (videoCountMap.get(v.model_id) || 0) + 1);
+        });
+        from += 1000;
+        if (data.length < 1000) hasMore = false;
+      }
+    }
 
     const rows: ModelRow[] = (modelsRes.data || []).map((m: any) => ({
       ...m,
