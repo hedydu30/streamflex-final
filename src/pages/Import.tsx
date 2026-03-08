@@ -37,6 +37,8 @@ import {
 } from "lucide-react";
 import FichierTokenManager from "@/components/FichierTokenManager";
 import { Progress } from "@/components/ui/progress";
+import GoogleDriveImport from "@/components/GoogleDriveImport";
+import { HardDrive } from "lucide-react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
@@ -1014,6 +1016,9 @@ const Import = () => {
           <TabsList className="bg-muted">
             <TabsTrigger value="1fichier">1fichier</TabsTrigger>
             <TabsTrigger value="coomer">Coomer</TabsTrigger>
+            <TabsTrigger value="gdrive" className="flex items-center gap-1.5">
+              <HardDrive size={14} /> Google Drive
+            </TabsTrigger>
             <TabsTrigger value="bulk">Import massif</TabsTrigger>
             <TabsTrigger value="imported">Mes imports ({importedVideos.length})</TabsTrigger>
           </TabsList>
@@ -1620,6 +1625,11 @@ const Import = () => {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* GOOGLE DRIVE TAB */}
+          <TabsContent value="gdrive" className="space-y-4">
+            <GoogleDriveImport onImported={refetchImported} />
           </TabsContent>
 
           {/* IMPORTED TAB - ADVANCED MANAGEMENT */}
