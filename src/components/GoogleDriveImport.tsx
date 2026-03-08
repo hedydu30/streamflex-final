@@ -165,7 +165,10 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
         setCurrentFolderId("root");
         setBreadcrumbs([{ id: "root", name: "Mon Drive" }]);
         setFiles([]);
+        setSelectedIds(new Set());
         toast({ title: `Connecté : ${info.email}` });
+        // Charger immédiatement les fichiers avec le nouveau compte
+        setTimeout(() => listFiles("root", account), 100);
       },
     });
     tc.requestAccessToken();
@@ -206,9 +209,8 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   }, [refreshToken]);
 
   // ── Lister les fichiers d'un dossier ─────────────────────
-  const listFiles = useCallback(async (folderId: string, pageToken?: string, acc?: GDriveAccount) => {
-    const account = acc || activeAccount;
-    if (!account) return;
+  // listFiles prend toujours le compte explicitement pour éviter les closures périmées
+  const listFiles = useCallback(async (folderId: string, account: GDriveAccount, pageToken?: string) => {
     setLoadingFiles(true);
     try {
       const token = await getToken(account);
@@ -232,13 +234,13 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
         setLoadingFiles(false); return;
       }
       const data = await resp.json();
-      setFiles(prev => pageToken ? [...prev, ...data.files] : data.files || []);
+      setFiles(prev => pageToken ? [...prev, ...(data.files || [])] : data.files || []);
       setNextPageToken(data.nextPageToken || null);
     } catch (e: any) {
       toast({ title: "Erreur Drive", description: e.message, variant: "destructive" });
     }
     setLoadingFiles(false);
-  }, [activeAccount, getToken, showOnlyVideos, toast]);
+  }, [getToken, showOnlyVideos, toast]);
 
   // ── Récupérer TOUTES les vidéos d'un dossier (récursif optionnel) ──
   const fetchAllVideosInFolder = useCallback(async (folderId: string, token: string): Promise<DriveFile[]> => {
@@ -429,23 +431,32 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
 
   // ── Navigation ────────────────────────────────────────────
   const openFolder = (folder: DriveFile) => {
+    if (!activeAccount) return;
+    const newBreadcrumbs = [...breadcrumbs, { id: folder.id, name: folder.name }];
+    setBreadcrumbs(newBreadcrumbs);
     setCurrentFolderId(folder.id);
-    setBreadcrumbs(prev => [...prev, { id: folder.id, name: folder.name }]);
     setFiles([]); setSelectedIds(new Set()); setNextPageToken(null);
+    listFiles(folder.id, activeAccount);
   };
 
   const navigateTo = (crumb: BreadcrumbItem, index: number) => {
-    setCurrentFolderId(crumb.id);
+    if (!activeAccount) return;
     setBreadcrumbs(prev => prev.slice(0, index + 1));
+    setCurrentFolderId(crumb.id);
     setFiles([]); setSelectedIds(new Set()); setNextPageToken(null);
+    listFiles(crumb.id, activeAccount);
   };
 
   useEffect(() => {
-    if (activeAccount && currentFolderId) listFiles(currentFolderId);
-  }, [currentFolderId, activeAccount]);
+    if (activeAccount && currentFolderId) listFiles(currentFolderId, activeAccount);
+  }, [currentFolderId, activeAccount, listFiles]);
 
   useEffect(() => {
-    if (activeAccount && currentFolderId) { setFiles([]); listFiles(currentFolderId); }
+    if (activeAccount && currentFolderId) {
+      setFiles([]);
+      listFiles(currentFolderId, activeAccount);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showOnlyVideos]);
 
   const videoFiles = files.filter(f => VIDEO_MIME_TYPES.includes(f.mimeType));
@@ -545,7 +556,14 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
                 const isActive = activeAccount?.email === acc.email;
                 return (
                   <div key={acc.email} onClick={() => {
-                    if (!isActive) { setActiveAccount(acc); setCurrentFolderId("root"); setBreadcrumbs([{ id: "root", name: "Mon Drive" }]); setFiles([]); setSelectedIds(new Set()); }
+                    if (!isActive) {
+                    setActiveAccount(acc);
+                    setCurrentFolderId("root");
+                    setBreadcrumbs([{ id: "root", name: "Mon Drive" }]);
+                    setFiles([]);
+                    setSelectedIds(new Set());
+                    setTimeout(() => listFiles("root", acc), 50);
+                  }
                   }}
                     className={cn("flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all",
                       isActive ? "border-primary/60 bg-primary/5" : "border-border bg-muted/30 hover:bg-muted/60")}>
@@ -761,7 +779,7 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
 
             {nextPageToken && !loadingFiles && (
               <div className="mt-4 text-center">
-                <Button variant="outline" size="sm" onClick={() => listFiles(currentFolderId, nextPageToken)}>
+                <Button variant="outline" size="sm" onClick={() => activeAccount && listFiles(currentFolderId, activeAccount, nextPageToken)}>
                   Charger plus
                 </Button>
               </div>
