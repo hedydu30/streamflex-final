@@ -161,6 +161,7 @@ const Import = () => {
   // Management state
   const [page, setPage] = useState(1);
   const [searchFilter, setSearchFilter] = useState("");
+  const [sourceImportFilter, setSourceImportFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingVideo, setEditingVideo] = useState<any>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -224,19 +225,37 @@ const Import = () => {
 
   // Filtered + paginated
   const filteredVideos = useMemo(() => {
-    if (!searchFilter.trim()) return importedVideos;
-    const q = searchFilter.toLowerCase();
-    return importedVideos.filter(
-      (v: any) =>
+    let result = [...importedVideos];
+    if (sourceImportFilter !== "all") result = result.filter((v: any) => v.source === sourceImportFilter);
+    if (searchFilter.trim()) {
+      const q = searchFilter.toLowerCase();
+      result = result.filter((v: any) =>
         v.title.toLowerCase().includes(q) ||
         v.source.toLowerCase().includes(q) ||
         v.original_url.toLowerCase().includes(q),
-    );
-  }, [importedVideos, searchFilter]);
+      );
+    }
+    return result;
+  }, [importedVideos, searchFilter, sourceImportFilter]);
+
+  // Sources disponibles dans les imports
+  const importSources = useMemo(() => {
+    const set = new Set(importedVideos.map((v: any) => v.source).filter(Boolean));
+    return Array.from(set).sort() as string[];
+  }, [importedVideos]);
+
+  const sourceLabel = (s: string) => {
+    if (s === "gdrive") return "Google Drive";
+    if (s === "1fichier") return "1Fichier";
+    if (s === "coomer") return "Coomer";
+    if (s === "bulk") return "Import massif";
+    return s;
+  };
 
   const totalPages = Math.max(1, Math.ceil(filteredVideos.length / PAGE_SIZE));
   const paginatedVideos = filteredVideos.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  useEffect(() => { setPage(1); }, [sourceImportFilter]);
   // Reset page when filter changes
   const handleSearchChange = (v: string) => {
     setSearchFilter(v);
@@ -1669,7 +1688,20 @@ const Import = () => {
                       </Button>
                     )}
                   </div>
-                  <div className="relative w-full md:w-64">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {importSources.length > 1 && (
+                      <select
+                        value={sourceImportFilter}
+                        onChange={e => { setSourceImportFilter(e.target.value); setPage(1); }}
+                        className="h-9 text-xs rounded-md border border-border bg-background text-foreground px-2 focus:outline-none focus:ring-1 focus:ring-primary"
+                      >
+                        <option value="all">Toutes sources</option>
+                        {importSources.map(s => (
+                          <option key={s} value={s}>{sourceLabel(s)}</option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="relative w-full md:w-64">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       placeholder="Filtrer par titre, source, URL..."
@@ -1685,6 +1717,7 @@ const Import = () => {
                         <X size={14} />
                       </button>
                     )}
+                  </div>
                   </div>
                 </div>
 

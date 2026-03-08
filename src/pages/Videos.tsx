@@ -22,7 +22,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { CardContextMenu, videoContextMenuItems } from "@/components/CardContextMenu";
 
 type SortKey = "title_asc" | "title_desc" | "date_new" | "date_old" | "duration_long" | "duration_short" | "size_big" | "size_small";
 type TabKey = "all" | "favorites" | "watched";
@@ -83,7 +82,6 @@ const VideoCard = ({ video, liked, percent, posSeconds, onNavigate, onPlay, onTo
   const titleAbbrev = (video.title || "V").substring(0, 3).toUpperCase();
 
   return (
-    <CardContextMenu items={videoContextMenuItems(video.id, video.title)}>
     <div className="group cursor-pointer relative"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}>
@@ -221,9 +219,8 @@ const VideoCard = ({ video, liked, percent, posSeconds, onNavigate, onPlay, onTo
         </div>
       </div>
     </div>
-    </CardContextMenu>
   );
-};;
+};
 
 const Videos = () => {
   const { user } = useAuth();
@@ -278,6 +275,13 @@ const Videos = () => {
 
   const closePlayer = useCallback(() => setPlayingVideo(null), []);
 
+  const sourceLabel = (s: string) => {
+    if (s === "gdrive") return "Google Drive";
+    if (s === "1fichier") return "1Fichier";
+    if (s === "coomer") return "Coomer";
+    if (s === "bulk") return "Import massif";
+    return s;
+  };
   const sources = useMemo(() => {
     const set = new Set(allVideos.map((v) => v.source).filter(Boolean));
     return Array.from(set).sort();
@@ -461,7 +465,7 @@ const Videos = () => {
                 <SelectTrigger className="w-[100px] md:w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all" className="text-xs">Toutes</SelectItem>
-                  {sources.map((s) => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
+                  {sources.map((s) => <SelectItem key={s} value={s} className="text-xs">{sourceLabel(s)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </>)}
