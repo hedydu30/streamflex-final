@@ -549,9 +549,19 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
                   }}
                     className={cn("flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all",
                       isActive ? "border-primary/60 bg-primary/5" : "border-border bg-muted/30 hover:bg-muted/60")}>
-                    <img src={acc.picture} alt={acc.name} className="w-9 h-9 rounded-full border border-border" />
+                    {/* Avatar avec fallback initiales si image bloquée */}
+                    <div className="w-9 h-9 rounded-full border border-border overflow-hidden bg-primary/20 flex items-center justify-center shrink-0">
+                      <img
+                        src={acc.picture} alt={acc.name}
+                        className="w-full h-full object-cover"
+                        onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
+                      <span className="text-xs font-bold text-primary absolute">
+                        {acc.name?.charAt(0)?.toUpperCase() || "G"}
+                      </span>
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{acc.name}</p>
+                      <p className="text-sm font-semibold text-foreground truncate">{acc.name || acc.email}</p>
                       <p className="text-xs text-muted-foreground truncate">{acc.email}</p>
                     </div>
                     {expired && (
