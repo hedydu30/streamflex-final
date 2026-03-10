@@ -3,6 +3,7 @@ import { useSessionState } from "@/hooks/useSessionState";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { getGdriveToken, buildGdriveStreamUrl, isGdriveVideo } from "@/lib/gdriveTokenStore";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
 import { useVideoProgress } from "@/hooks/useVideoProgress";
 import { useScrollRestore } from "@/hooks/useScrollRestore";
@@ -265,7 +266,21 @@ const Videos = () => {
 
   const openPlayer = useCallback(async (video: any) => {
     setLoadingPlayer(true);
-    const url = await fetchSignedUrl(video.id);
+    let url: string | null = null;
+
+    // Google Drive : bypass video-token, utilise le token OAuth local
+    if (isGdriveVideo(video)) {
+      const token = getGdriveToken();
+      const fileId = video.metadata?.fileId;
+      if (token && fileId) {
+        url = buildGdriveStreamUrl(fileId, token);
+      } else if (!token) {
+        alert("Token Google Drive expiré. Reconnectez-vous sur la page Import → Google Drive.");
+      }
+    } else {
+      url = await fetchSignedUrl(video.id);
+    }
+
     if (url) {
       const mName = video.model_id ? modelNames.get(video.model_id) : video.metadata?.model_name;
       setPlayingVideo({ id: video.id, signedUrl: url, title: video.title, modelName: mName, modelId: video.model_id });

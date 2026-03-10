@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { saveGdriveToken } from "@/lib/gdriveTokenStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -252,6 +253,7 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   // Pas de useCallback pour éviter closure périmée sur loadFolder
   const activateAccount = async (token: string, email: string, name: string) => {
     tokenRef.current = token;
+    saveGdriveToken(token); // ← persiste le token pour la lecture vidéo
     emailRef.current = email;
     setActiveEmail(email);
     setActiveName(name);
@@ -350,15 +352,16 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
     if (!user) return "error";
     const ext = file.name.split(".").pop()?.toLowerCase() || null;
     // Construire l'URL de lecture (webViewLink en priorité — toujours accessible)
-    const url = file.webViewLink || file.webContentLink || `https://drive.google.com/file/d/${file.id}/view`;
+    // URL /preview = iframe embed Google Drive (seule façon de lire sans token OAuth dans <video>)
+    const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
     const driveAccount = emailRef.current || "";
     const { error } = await supabase.from("imported_videos").insert({
-      user_id: user.id,           // requis par RLS (auth.uid() = user_id)
-      source: "coomer", // gdrive stocké dans metadata.tag — contrainte DB: coomer|1fichier|direct|coomer_bulk|direct_bulk
+      user_id: user.id,
+      source: "coomer", // contrainte DB: coomer|1fichier|direct|coomer_bulk|direct_bulk — gdrive dans metadata.tag
+      is_active: true,  // REQUIS : le hook useImportedVideos filtre is_active=true
       title: file.name.replace(/\.[^.]+$/, ""),
-      original_url: url,
-      download_url: url,
-      // thumbnail_url omis volontairement : Google Drive thumbnails = 403 sans token
+      original_url: previewUrl,
+      download_url: previewUrl,
       thumbnail_url: null,
       model_id: modelId,
       metadata: {

@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { refreshVideoToken } from "@/lib/secure-video";
 import { usePlayerSettings, getPlayerStyles } from "@/hooks/usePlayerSettings";
 import { useAuth } from "@/contexts/AuthContext";
-import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { useToast } from "@/hooks/use-toast";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
 import { useActivityLog } from "@/hooks/useActivityLog";
@@ -47,7 +46,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const playerNavigate = useNavigate();
   const { user } = useAuth();
-  const { video: videoSettings } = useSiteSettings();
   const { toast } = useToast();
   const { isFavorite, toggleFavorite } = useVideoFavorites();
   const { logEvent } = useActivityLog();
@@ -457,7 +455,23 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </button>
       )}
 
-      {/* Video element */}
+      {/* Video element — iframe pour Google Drive /preview, <video> sinon */}
+      {src.includes("drive.google.com") && src.includes("/preview") ? (
+        <iframe
+          src={src}
+          className="w-full"
+          style={{
+            height: playerStyles.aspectRatio ? "auto" : "100vh",
+            aspectRatio: playerStyles.aspectRatio || "16/9",
+            maxHeight: "100vh",
+            border: "none",
+            borderRadius: `${playerSettings.borderRadius}px`,
+          }}
+          allow="autoplay; fullscreen"
+          allowFullScreen
+          title={title}
+        />
+      ) : (
       <video
         ref={videoRef}
         className="w-full cursor-pointer"
@@ -489,6 +503,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         preload="auto"
         loop={playerSettings.loop}
       />
+      )}
 
       {/* Loading spinner */}
       {isLoading && (
@@ -808,8 +823,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       </div>
 
-      {/* Dynamic watermark — désactivable depuis Admin > CMS > Lecteur vidéo */}
-      {user && videoSettings.show_watermark === true && (
+      {/* Dynamic watermark */}
+      {user && (
         <div className="absolute inset-0 z-10 pointer-events-none select-none overflow-hidden">
           <div
             className="absolute text-white/15 text-sm font-medium tracking-wider"
