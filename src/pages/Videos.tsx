@@ -3,7 +3,6 @@ import { useSessionState } from "@/hooks/useSessionState";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { getGdriveToken, buildGdriveStreamUrl, isGdriveVideo } from "@/lib/gdriveTokenStore";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
 import { useVideoProgress } from "@/hooks/useVideoProgress";
 import { useScrollRestore } from "@/hooks/useScrollRestore";
@@ -268,15 +267,10 @@ const Videos = () => {
     setLoadingPlayer(true);
     let url: string | null = null;
 
-    // Google Drive : bypass video-token, utilise le token OAuth local
-    if (isGdriveVideo(video)) {
-      const token = getGdriveToken();
-      const fileId = video.metadata?.fileId;
-      if (token && fileId) {
-        url = buildGdriveStreamUrl(fileId, token);
-      } else if (!token) {
-        alert("Token Google Drive expiré. Reconnectez-vous sur la page Import → Google Drive.");
-      }
+    // Google Drive : l'URL /preview est stockée directement en DB (pas de token requis)
+    const isGdrive = video.original_url?.includes("drive.google.com") || video.metadata?.tag === "google_drive";
+    if (isGdrive) {
+      url = video.original_url || null;
     } else {
       url = await fetchSignedUrl(video.id);
     }
