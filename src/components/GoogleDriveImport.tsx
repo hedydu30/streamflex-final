@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { saveGdriveToken } from "@/lib/gdriveTokenStore";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -253,7 +252,6 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   // Pas de useCallback pour éviter closure périmée sur loadFolder
   const activateAccount = async (token: string, email: string, name: string) => {
     tokenRef.current = token;
-    saveGdriveToken(token); // ← persiste le token pour la lecture vidéo
     emailRef.current = email;
     setActiveEmail(email);
     setActiveName(name);
