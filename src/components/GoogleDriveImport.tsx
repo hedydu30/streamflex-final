@@ -44,7 +44,7 @@ const VIDEO_EXT = new Set([
 const FOLDER_MIME   = "application/vnd.google-apps.folder";
 const CLIENT_ID_KEY = "sf_gdrive_client_id";
 const ACCOUNTS_KEY  = "sf_gdrive_accounts";
-const SCOPES        = "https://www.googleapis.com/auth/drive.readonly";
+const SCOPES        = "https://www.googleapis.com/auth/drive.readonly openid email profile";
 
 // ─── Helpers ─────────────────────────────────────────────────
 function loadSaved(): SavedAccount[] {
@@ -273,10 +273,12 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   const addAccount = async () => {
     try {
       const token = await getToken(undefined, "select_account consent");
-      const info = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      const userinfoResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${token}` },
-      }).then(r => r.json());
-      // name peut être absent selon le scope — fallback sur given_name ou email
+      });
+      if (!userinfoResp.ok) throw new Error(`Userinfo ${userinfoResp.status}`);
+      const info = await userinfoResp.json();
+      if (!info.email) throw new Error("Email non reçu — vérifiez les scopes OAuth");
       const displayName = info.name || [info.given_name, info.family_name].filter(Boolean).join(" ") || info.email;
       const acc: SavedAccount = { email: info.email, name: displayName };
       setAccounts(prev => {
