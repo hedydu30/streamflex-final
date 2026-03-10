@@ -343,25 +343,30 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   };
 
   // ── Insérer une vidéo — utilise les refs pour email ────
-  const insertVideo = async (file: DriveFile, modelId: string, folderName: string, folderPath: string): Promise<"ok"|"dupe"|"error"> => {
-    if (!user || !emailRef.current) return "error";
+  const insertVideo = async (
+    file: DriveFile, modelId: string, folderName: string, folderPath: string,
+    onFirstError?: (msg: string) => void
+  ): Promise<"ok"|"dupe"|"error"> => {
+    if (!user) return "error";
     const ext = file.name.split(".").pop()?.toLowerCase() || null;
-    const url = file.webContentLink || file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`;
+    // Construire l'URL de lecture (webViewLink en priorité — toujours accessible)
+    const url = file.webViewLink || file.webContentLink || `https://drive.google.com/file/d/${file.id}/view`;
+    const driveAccount = emailRef.current || "";
+    // Utiliser exactement les mêmes champs que les autres imports (coomer/bulk)
     const { error } = await supabase.from("imported_videos").insert({
-      user_id: user.id,
       source: "gdrive",
       title: file.name.replace(/\.[^.]+$/, ""),
       original_url: url,
-      file_size: file.size ? parseInt(file.size) : null,
-      format: ext,
+      download_url: url,
       thumbnail_url: file.thumbnailLink?.replace(/=s\d+/, "=s400") || null,
       model_id: modelId,
-      is_active: true,
       metadata: {
         tag: "google_drive",
         fileId: file.id,
         mimeType: file.mimeType,
-        driveAccount: emailRef.current,
+        ext,
+        fileSize: file.size || null,
+        driveAccount,
         folderName,
         folderPath,
         webViewLink: file.webViewLink || null,
@@ -371,7 +376,10 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
     });
     if (!error) return "ok";
     if (error.code === "23505") return "dupe";
+    // Afficher la vraie erreur (première occurrence seulement)
+    const msg = `${error.message} [code: ${error.code}]`;
     console.error("Erreur insertion vidéo:", file.name, error);
+    onFirstError?.(msg);
     return "error";
   };
 
@@ -404,9 +412,16 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
 
       let done = 0, skipped = 0, errors = 0;
       for (const f of videos) {
-        const r = await insertVideo(f, modelId, folder.name, folderPath);
+        let firstError = "";
+        const r = await insertVideo(f, modelId, folder.name, folderPath, (msg) => {
+          if (!firstError) firstError = msg;
+        });
         if (r === "dupe") skipped++;
-        else if (r === "error") errors++;
+        else if (r === "error") {
+          errors++;
+          // Afficher la première erreur dans le toast final
+          if (errors === 1 && firstError) console.warn("Première erreur DB:", firstError);
+        }
         done++;
         setImportPct(Math.round(done / videos.length * 100));
         setImportMsg(`${done}/${videos.length} — ${f.name}`);
@@ -414,10 +429,13 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
 
       const imported = done - skipped - errors;
       setResult({ folderName: folder.name, modelCreated, imported, skipped, errors });
-      onImported?.();
+      if (imported > 0) onImported?.();
       toast({
-        title: `✅ "${folder.name}"`,
-        description: `${imported} vidéo${imported !== 1 ? "s" : ""} · modèle ${modelCreated ? "créé" : "mis à jour"}${skipped ? ` · ${skipped} doublon${skipped !== 1 ? "s" : ""}` : ""}${errors ? ` · ${errors} erreur${errors !== 1 ? "s" : ""}` : ""}`,
+        title: imported > 0 ? `✅ "${folder.name}"` : `⚠️ "${folder.name}" — 0 vidéos importées`,
+        description: imported > 0
+          ? `${imported} vidéo${imported !== 1 ? "s" : ""} · modèle ${modelCreated ? "créé" : "mis à jour"}${skipped ? ` · ${skipped} doublon${skipped !== 1 ? "s" : ""}` : ""}${errors ? ` · ${errors} erreur${errors !== 1 ? "s" : ""}` : ""}`
+          : `${errors} erreur${errors !== 1 ? "s" : ""} DB · Consultez la console (F12) pour le détail`,
+        variant: imported > 0 ? "default" : "destructive",
       });
     } catch (e: any) {
       console.error("Import error:", e);
@@ -439,7 +457,9 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
       const folderPath = crumbs.map(c => c.name).join(" / ");
       let done = 0, skipped = 0, errors = 0;
       for (const f of toImport) {
-        const r = await insertVideo(f, modelId, folderName, folderPath);
+        const r = await insertVideo(f, modelId, folderName, folderPath, (msg) => {
+          console.warn("Erreur insertion:", msg);
+        });
         if (r === "dupe") skipped++; else if (r === "error") errors++;
         done++;
         setImportPct(Math.round(done / toImport.length * 100));
