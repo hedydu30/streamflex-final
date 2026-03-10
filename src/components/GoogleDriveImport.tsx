@@ -249,48 +249,59 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
   }, []);
 
   // ── Activer un compte avec token ────────────────────────
-  const activateAccount = useCallback(async (token: string, email: string, name: string) => {
+  // Pas de useCallback pour éviter closure périmée sur loadFolder
+  const activateAccount = async (token: string, email: string, name: string) => {
     tokenRef.current = token;
     emailRef.current = email;
     setActiveEmail(email);
     setActiveName(name);
     setCrumbs([{ id: "root", name: "Mon Drive" }]);
     setFiles([]); setSelected(new Set()); setResult(null);
-    await loadFolder("root", token);
-  }, [loadFolder]);
+    // Charger directement sans passer par loadFolder (évite closure périmée)
+    setLoading(true);
+    try {
+      const data = await listFolderDirect(token, "root", false);
+      setFiles(data.files || []);
+      setMoreToken(data.nextPageToken || null);
+    } catch (e: any) {
+      toast({ title: "Erreur Drive", description: e.message, variant: "destructive" });
+    }
+    setLoading(false);
+  };
 
   // ── Ajouter un compte ───────────────────────────────────
-  const addAccount = useCallback(async () => {
+  const addAccount = async () => {
     try {
       const token = await getToken(undefined, "select_account consent");
       const info = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${token}` },
       }).then(r => r.json());
-      const acc: SavedAccount = { email: info.email, name: info.name };
+      // name peut être absent selon le scope — fallback sur given_name ou email
+      const displayName = info.name || [info.given_name, info.family_name].filter(Boolean).join(" ") || info.email;
+      const acc: SavedAccount = { email: info.email, name: displayName };
       setAccounts(prev => {
         const u = [...prev.filter(a => a.email !== info.email), acc];
         persistSaved(u); return u;
       });
-      await activateAccount(token, info.email, info.name);
+      await activateAccount(token, info.email, displayName);
       toast({ title: `✅ ${info.email} connecté` });
     } catch (e: any) {
       if (!e.message.includes("popup_closed") && !e.message.includes("access_denied"))
         toast({ title: "Erreur connexion", description: e.message, variant: "destructive" });
     }
-  }, [getToken, activateAccount, toast]);
+  };
 
   // ── Sélectionner un compte sauvegardé ──────────────────
-  const selectAccount = useCallback(async (acc: SavedAccount) => {
-    if (acc.email === emailRef.current) return; // déjà actif
+  const selectAccount = async (acc: SavedAccount) => {
+    if (acc.email === emailRef.current) return;
     try {
-      // Essai silencieux d'abord
       const token = await getToken(acc.email, "").catch(() => getToken(acc.email, "select_account"));
       await activateAccount(token, acc.email, acc.name);
     } catch (e: any) {
       if (!e.message.includes("popup_closed"))
         toast({ title: "Erreur", description: e.message, variant: "destructive" });
     }
-  }, [getToken, activateAccount, toast]);
+  };
 
   const removeAccount = (email: string) => {
     setAccounts(prev => { const u = prev.filter(a => a.email !== email); persistSaved(u); return u; });
