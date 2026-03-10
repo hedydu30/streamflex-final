@@ -267,10 +267,13 @@ const Videos = () => {
     setLoadingPlayer(true);
     let url: string | null = null;
 
-    // Google Drive : l'URL /preview est stockée directement en DB (pas de token requis)
-    const isGdrive = video.original_url?.includes("drive.google.com") || video.metadata?.tag === "google_drive";
+    // Google Drive : forcer /preview (streamable iframe) même si /view est stocké en DB
+    const isGdrive = video.original_url?.includes("drive.google.com");
     if (isGdrive) {
-      url = video.original_url || null;
+      // Extraire fileId et construire une URL /preview propre
+      const match = video.original_url?.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      const fileId = match?.[1];
+      url = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : video.original_url;
     } else {
       url = await fetchSignedUrl(video.id);
     }

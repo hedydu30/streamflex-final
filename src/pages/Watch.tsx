@@ -47,7 +47,7 @@ const Watch = () => {
     try {
       let query = supabase
         .from("imported_videos")
-        .select("id, title, thumbnail_url, duration_seconds, format, file_size, source, metadata, model_id")
+        .select("id, title, thumbnail_url, duration_seconds, format, file_size, source, metadata, model_id, original_url")
         .eq("id", id);
 
       if (user) {
@@ -65,6 +65,16 @@ const Watch = () => {
 
       if (!user) {
         return { video: data, src: "", modelName };
+      }
+
+      // Google Drive : utiliser /preview (iframe natif, pas de token requis)
+      if (data.original_url?.includes("drive.google.com")) {
+        const match = data.original_url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        const fileId = match?.[1] || data.metadata?.fileId;
+        const previewUrl = fileId
+          ? `https://drive.google.com/file/d/${fileId}/preview`
+          : data.original_url;
+        return { video: data, src: previewUrl, modelName };
       }
 
       // Use secure video URL fetcher
