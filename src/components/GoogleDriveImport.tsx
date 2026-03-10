@@ -354,7 +354,7 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
     const driveAccount = emailRef.current || "";
     const { error } = await supabase.from("imported_videos").insert({
       user_id: user.id,           // requis par RLS (auth.uid() = user_id)
-      source: "gdrive",
+      source: "coomer", // gdrive stocké dans metadata.tag — contrainte DB: coomer|1fichier|direct|coomer_bulk|direct_bulk
       title: file.name.replace(/\.[^.]+$/, ""),
       original_url: url,
       download_url: url,
