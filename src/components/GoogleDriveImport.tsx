@@ -352,13 +352,14 @@ export default function GoogleDriveImport({ onImported }: { onImported?: () => v
     // Construire l'URL de lecture (webViewLink en priorité — toujours accessible)
     const url = file.webViewLink || file.webContentLink || `https://drive.google.com/file/d/${file.id}/view`;
     const driveAccount = emailRef.current || "";
-    // Utiliser exactement les mêmes champs que les autres imports (coomer/bulk)
     const { error } = await supabase.from("imported_videos").insert({
+      user_id: user.id,           // requis par RLS (auth.uid() = user_id)
       source: "gdrive",
       title: file.name.replace(/\.[^.]+$/, ""),
       original_url: url,
       download_url: url,
-      thumbnail_url: file.thumbnailLink?.replace(/=s\d+/, "=s400") || null,
+      // thumbnail_url omis volontairement : Google Drive thumbnails = 403 sans token
+      thumbnail_url: null,
       model_id: modelId,
       metadata: {
         tag: "google_drive",
