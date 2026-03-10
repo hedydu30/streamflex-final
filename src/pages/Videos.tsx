@@ -458,14 +458,15 @@ const Videos = () => {
                 <SelectItem value="very_long" className="text-xs">{"> 1h"}</SelectItem>
               </SelectContent>
             </Select>
-            {sources.length > 1 && (<>
+            {(<>
               <div className="w-px h-5 bg-border mx-1 hidden sm:block" />
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Filter size={14} /><span className="hidden sm:inline">Source :</span></div>
               <Select value={sourceFilter} onValueChange={setSourceFilter}>
                 <SelectTrigger className="w-[100px] md:w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all" className="text-xs">Toutes</SelectItem>
-                  {sources.map((s) => <SelectItem key={s} value={s} className="text-xs">{sourceLabel(s)}</SelectItem>)}
+                  {/* Sources dynamiques + Google Drive toujours présent */}
+                  {[...new Set([...sources, "gdrive"])].map((s) => <SelectItem key={s} value={s} className="text-xs">{sourceLabel(s)}</SelectItem>)}
                 </SelectContent>
               </Select>
             </>)}
