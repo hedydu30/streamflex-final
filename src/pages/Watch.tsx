@@ -77,11 +77,16 @@ const Watch = () => {
         return { video: data, src: previewUrl, modelName };
       }
 
-      // Use secure video URL fetcher
+      // Use secure video URL fetcher — fallback sur original_url si échec
       const result = await getSecureVideoUrl(id);
-      if (!result) return null;
-
-      return { video: data, src: result.blobUrl, modelName };
+      if (result) {
+        return { video: data, src: result.blobUrl, modelName };
+      }
+      // Fallback : utiliser original_url directement (vidéos "direct" ou coomer accessibles)
+      if (data.original_url) {
+        return { video: data, src: data.original_url, modelName };
+      }
+      return null;
     } catch {}
     return null;
   }, [user]);

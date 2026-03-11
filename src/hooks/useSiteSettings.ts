@@ -49,6 +49,7 @@ export interface CmsSettings {
   navbar_blur: boolean;
   footer_enabled: boolean;
   accent_color: string;
+  email_watermark: boolean;
 }
 
 export interface VideoSettings {
@@ -58,7 +59,6 @@ export interface VideoSettings {
   default_volume: number;
   preload_strategy: "none" | "metadata" | "auto";
   hls_enabled: boolean;
-  show_watermark: boolean;
 }
 
 export type AllSettings = {
@@ -102,6 +102,7 @@ export const DEFAULT_CMS: CmsSettings = {
   navbar_blur: true,
   footer_enabled: true,
   accent_color: "",
+  email_watermark: true,
 };
 
 export const DEFAULT_VIDEO: VideoSettings = {
@@ -111,7 +112,6 @@ export const DEFAULT_VIDEO: VideoSettings = {
   default_volume: 80,
   preload_strategy: "metadata",
   hls_enabled: false,
-  show_watermark: false,
 };
 
 // ── Query key ─────────────────────────────────────────────────

@@ -244,23 +244,26 @@ const Videos = () => {
   const [playingVideo, setPlayingVideo] = useState<{ id: string; signedUrl: string; title: string; modelName?: string; modelId?: string } | null>(null);
   const [loadingPlayer, setLoadingPlayer] = useState(false);
 
-  const fetchSignedUrl = useCallback(async (videoId: string): Promise<string | null> => {
+  const fetchSignedUrl = useCallback(async (videoId: string, originalUrl?: string): Promise<string | null> => {
     try {
       const { data: tokenData, error } = await supabase.functions.invoke("video-token", {
         body: { videoId },
       });
-      if (error || !tokenData?.token) return null;
+      if (error || !tokenData?.token) {
+        // Fallback : original_url directement
+        return originalUrl || null;
+      }
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
       const session = (await supabase.auth.getSession()).data.session;
-      if (!session) return null;
+      if (!session) return originalUrl || null;
       const res = await fetch(
         `${supabaseUrl}/functions/v1/video-token?action=stream&id=${videoId}&t=${tokenData.token}&e=${tokenData.expiresAt}`,
         { headers: { Authorization: `Bearer ${session.access_token}`, apikey: anonKey } }
       );
       const streamData = await res.json();
-      return streamData.url || null;
-    } catch { return null; }
+      return streamData.url || originalUrl || null;
+    } catch { return originalUrl || null; }
   }, []);
 
   const openPlayer = useCallback(async (video: any) => {
@@ -275,7 +278,7 @@ const Videos = () => {
       const fileId = match?.[1];
       url = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : video.original_url;
     } else {
-      url = await fetchSignedUrl(video.id);
+      url = await fetchSignedUrl(video.id, video.original_url);
     }
 
     if (url) {

@@ -7,10 +7,8 @@ import {
   saveSiteSetting,
   DEFAULT_CMS,
   DEFAULT_GENERAL,
-  DEFAULT_VIDEO,
   type CmsSettings,
   type GeneralSettings,
-  type VideoSettings,
 } from "@/hooks/useSiteSettings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +30,6 @@ import {
   Film,
   RefreshCw,
   AlignLeft,
-  Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -108,11 +105,10 @@ const AdminCMSSettings = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { general: loadedGeneral, cms: loadedCms, video: loadedVideo, isLoading } = useSiteSettings();
+  const { general: loadedGeneral, cms: loadedCms, isLoading } = useSiteSettings();
 
   const [general, setGeneral] = useState<GeneralSettings>({ ...DEFAULT_GENERAL });
   const [cms, setCms] = useState<CmsSettings>({ ...DEFAULT_CMS });
-  const [video, setVideo] = useState<VideoSettings>({ ...DEFAULT_VIDEO });
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
@@ -120,14 +116,13 @@ const AdminCMSSettings = () => {
   if (!isLoading && !initialized && (loadedGeneral || loadedCms)) {
     setGeneral({ ...DEFAULT_GENERAL, ...loadedGeneral });
     setCms({ ...DEFAULT_CMS, ...loadedCms });
-    setVideo({ ...DEFAULT_VIDEO, ...loadedVideo });
     setInitialized(true);
   }
 
   const save = useCallback(async () => {
     if (!user) return;
     setSaving(true);
-    await Promise.all([saveSiteSetting("general", general, user.id), saveSiteSetting("cms", cms, user.id), saveSiteSetting("video", video, user.id)]);
+    await Promise.all([saveSiteSetting("general", general, user.id), saveSiteSetting("cms", cms, user.id)]);
     // Invalidate so all consumers get updated settings instantly
     queryClient.invalidateQueries({ queryKey: ["site-settings"] });
     toast({ title: "✅ CMS sauvegardé" });
@@ -135,7 +130,6 @@ const AdminCMSSettings = () => {
   }, [user, general, cms, queryClient, toast]);
 
   const updateCms = (patch: Partial<CmsSettings>) => setCms((prev) => ({ ...prev, ...patch }));
-  const updateVideo = (patch: Partial<VideoSettings>) => setVideo((prev) => ({ ...prev, ...patch }));
   const updateGeneral = (patch: Partial<GeneralSettings>) => setGeneral((prev) => ({ ...prev, ...patch }));
 
   if (isLoading)
@@ -410,16 +404,15 @@ const AdminCMSSettings = () => {
               checked={cms.navbar_blur}
               onCheckedChange={(v) => updateCms({ navbar_blur: v })}
             />
-          </Section>
-
-          {/* ── Lecteur vidéo ── */}
-          <Section title="Lecteur vidéo" icon={Play}>
-            <ToggleRow
-              label="Filigrane email utilisateur"
-              description="Afficher l'email de l'utilisateur en superposition pendant la lecture (désactiver = plus discret)"
-              checked={video.show_watermark}
-              onCheckedChange={(v) => updateVideo({ show_watermark: v })}
-            />
+            <SettingRow
+              label="Filigrane email lecteur"
+              description="Affiche l'email du spectateur sur le lecteur vidéo"
+            >
+              <Switch
+                checked={cms.email_watermark}
+                onCheckedChange={(v) => updateCms({ email_watermark: v })}
+              />
+            </SettingRow>
           </Section>
         </div>
 

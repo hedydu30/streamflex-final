@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { refreshVideoToken } from "@/lib/secure-video";
 import { usePlayerSettings, getPlayerStyles } from "@/hooks/usePlayerSettings";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { useToast } from "@/hooks/use-toast";
 import { useVideoFavorites } from "@/hooks/useVideoFavorites";
 import { useActivityLog } from "@/hooks/useActivityLog";
@@ -46,6 +47,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const playerNavigate = useNavigate();
   const { user } = useAuth();
+  const { cms } = useSiteSettings();
   const { toast } = useToast();
   const { isFavorite, toggleFavorite } = useVideoFavorites();
   const { logEvent } = useActivityLog();
@@ -830,7 +832,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       </div>
 
       {/* Dynamic watermark */}
-      {user && (
+      {user && cms.email_watermark && (
         <div className="absolute inset-0 z-10 pointer-events-none select-none overflow-hidden">
           <div
             className="absolute text-white/15 text-sm font-medium tracking-wider"
