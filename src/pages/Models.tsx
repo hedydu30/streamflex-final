@@ -285,34 +285,30 @@ const ModelGridCard = ({
         className={cn(
           "relative aspect-[2/3] rounded-lg overflow-hidden ring-1 transition-all duration-300",
           "group-hover:shadow-lg group-hover:shadow-primary/20 group-hover:scale-[1.03]",
-          !imgSrc ? `${palette.border} ring-0 border` : "ring-border/30 group-hover:ring-primary/60",
+          `${palette.border} ring-0 border`,
         )}
       >
-        {imgSrc ? (
-          <img
-            src={imgSrc}
-            alt={model.name}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            loading="lazy"
-            onError={() => setImgError(true)}
-          />
-        ) : (
-          <div
-            className={cn(
-              "w-full h-full flex flex-col items-center justify-center bg-gradient-to-br p-4",
-              palette.from,
-              palette.to,
-            )}
-          >
+        {/* Fond gradient toujours présent */}
+        <div className={cn("w-full h-full flex items-center justify-center bg-gradient-to-br", palette.from, palette.to)}>
+          {imgSrc ? (
+            <div className="w-3/4 aspect-square rounded-full overflow-hidden ring-4 ring-white/20 shadow-xl shadow-black/50">
+              <img
+                src={imgSrc}
+                alt={model.name}
+                className="w-full h-full object-cover"
+                loading="lazy"
+                onError={() => setImgError(true)}
+              />
+            </div>
+          ) : (
             <span
               className={cn("text-4xl md:text-5xl font-bold font-cyber tracking-wider", palette.text)}
               style={{ textShadow: "0 0 20px currentColor" }}
             >
               {nameAbbrev}
             </span>
-          </div>
-        )}
-        {firstVideoId && <VideoCardPreview videoId={firstVideoId} isHovered={hovered} />}
+          )}
+        </div>
 
         {/* Favorite heart button */}
         {onToggleFav && (

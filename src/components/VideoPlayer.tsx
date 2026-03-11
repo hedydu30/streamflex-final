@@ -60,7 +60,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [buffered, setBuffered] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !src?.includes('drive.google.com'));
   const [resumePosition, setResumePosition] = useState<number | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -334,7 +334,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       autoPlayAttemptedRef.current = false;
       if (!isFirstLoad) {
         setCurrentTime(0); setDuration(0); setBuffered(0);
-        if (!isMixTransition.current) setIsLoading(true);
+        if (!isMixTransition.current) setIsLoading(!src?.includes('drive.google.com'));
         setShowResumePrompt(false); setResumePosition(null); lastSaveRef.current = 0;
         setShowEndScreen(false);
       }
