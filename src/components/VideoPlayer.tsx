@@ -324,6 +324,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   }, [volume, isFullscreen, isPlaying, showSettingsPanel, playbackRate, duration]);
 
   // --- Source management ---
+  const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
@@ -341,6 +342,11 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       if (!isMixTransition.current) video.pause();
       video.src = src;
       video.load();
+      // Timeout de sécurité : forcer isLoading=false après 10s si canplay ne déclenche pas
+      if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
+      if (!src.includes('drive.google.com')) {
+        loadingTimeoutRef.current = setTimeout(() => setIsLoading(false), 10000);
+      }
     }
   }, [src, onNext]);
 
@@ -507,7 +513,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
       {/* Loading spinner */}
       {isLoading && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
           <div className="w-12 h-12 border-4 border-[#FF1B6B] border-t-transparent rounded-full animate-spin" />
         </div>
       )}
