@@ -49,7 +49,7 @@ export const useImportedVideos = () => {
       let countQuery = supabase
         .from("imported_videos")
         .select("*", { count: "exact", head: true })
-        .neq("is_active", false);
+        .or("is_active.is.null,is_active.eq.true");
 
       if (user) {
         countQuery = countQuery.eq("user_id", user.id);
@@ -69,7 +69,7 @@ export const useImportedVideos = () => {
           .select(
             "id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id",
           ) // Precise columns — avoids fetching metadata JSONB bloat
-          .neq("is_active", false)
+          .or("is_active.is.null,is_active.eq.true")
           .order("imported_at", { ascending: false })
           .range(from, from + BATCH_SIZE - 1);
 

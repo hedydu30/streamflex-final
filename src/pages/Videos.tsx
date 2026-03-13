@@ -79,7 +79,7 @@ function applyFilters(
 ) {
   const { userId, search, sortBy, sourceFilter, formatFilter, durationFilter, activeTab, favoriteIds, watchedIds } = opts;
 
-  q = q.neq("is_active", false);
+  q = q.or("is_active.is.null,is_active.eq.true");
   if (userId) q = q.eq("user_id", userId);
 
   if (activeTab === "favorites") {
@@ -279,12 +279,12 @@ const Videos = () => {
   const watchedCount = watchedIds.size;
 
   // Clé stable pour les tabs qui dépendent de sets
-  const favKey = activeTab === "favorites" ? Array.from(favoriteIds).sort().join(",") : "";
-  const watchedKey = activeTab === "watched" ? Array.from(watchedIds).sort().join(",") : "";
+  const favCacheKey = activeTab === "favorites" ? favoriteIds.size : 0;
+  const watchedCacheKey = activeTab === "watched" ? watchedIds.size : 0;
 
   // ── Query principale paginée ─────────────────────────────────────────────────
   const { data: pageResult, isLoading, isFetching } = useQuery({
-    queryKey: ["videos-page", user?.id, page, search, sortBy, sourceFilter, formatFilter, durationFilter, activeTab, favKey, watchedKey],
+    queryKey: ["videos-page", user?.id, page, search, sortBy, sourceFilter, formatFilter, durationFilter, activeTab, favCacheKey, watchedCacheKey],
     queryFn: async () => {
       if (activeTab === "favorites" && favoriteIds.size === 0) return { data: [], count: 0 };
       if (activeTab === "watched" && watchedIds.size === 0) return { data: [], count: 0 };
@@ -313,7 +313,7 @@ const Videos = () => {
   const { data: metaData } = useQuery({
     queryKey: ["videos-meta", user?.id],
     queryFn: async () => {
-      let q = supabase.from("imported_videos").select("source,format").neq("is_active", false);
+      let q = supabase.from("imported_videos").select("source,format").or("is_active.is.null,is_active.eq.true").limit(2000);
       if (user) q = q.eq("user_id", user.id);
       const { data } = await q;
       const sources = [...new Set((data ?? []).map((r: any) => r.source).filter(Boolean))].sort() as string[];
@@ -383,7 +383,7 @@ const Videos = () => {
 
   // ── Mix serveur-side ─────────────────────────────────────────────────────────
   const startMix = useCallback(async () => {
-    let q = supabase.from("imported_videos").select("id").neq("is_active", false).limit(200);
+    let q = supabase.from("imported_videos").select("id").or("is_active.is.null,is_active.eq.true").limit(200);
     if (user) q = q.eq("user_id", user.id);
     if (search.trim()) q = q.ilike("title", `%${search.trim()}%`);
     if (sourceFilter !== "all") {
