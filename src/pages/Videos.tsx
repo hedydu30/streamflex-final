@@ -112,10 +112,10 @@ function applyFilters(
     case "date_old":       q = q.order("imported_at", { ascending: true }); break;
     case "title_asc":      q = q.order("title", { ascending: true }); break;
     case "title_desc":     q = q.order("title", { ascending: false }); break;
-    case "duration_long":  q = q.order("duration_seconds", { ascending: false, nullsFirst: false }); break;
-    case "duration_short": q = q.order("duration_seconds", { ascending: true, nullsFirst: false }); break;
-    case "size_big":       q = q.order("file_size", { ascending: false, nullsFirst: false }); break;
-    case "size_small":     q = q.order("file_size", { ascending: true, nullsFirst: false }); break;
+    case "duration_long":  q = q.order("duration_seconds", { ascending: false }); break;
+    case "duration_short": q = q.order("duration_seconds", { ascending: true }); break;
+    case "size_big":       q = q.order("file_size", { ascending: false }); break;
+    case "size_small":     q = q.order("file_size", { ascending: true }); break;
   }
 
   return q;
@@ -292,17 +292,23 @@ const Videos = () => {
       const from = (page - 1) * ITEMS_PER_PAGE;
       let q = supabase
         .from("imported_videos")
-        .select("id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id", { count: "exact" })
-        .range(from, from + ITEMS_PER_PAGE - 1);
+        .select("id,title,original_url,thumbnail_url,model_id,source,format,file_size,duration_seconds,imported_at,is_active,average_rating,category_id", { count: "exact" });
 
       q = applyFilters(q, { userId: user?.id, search, sortBy, sourceFilter, formatFilter, durationFilter, activeTab, favoriteIds, watchedIds });
 
+      // range() doit être en dernier
+      q = q.range(from, from + ITEMS_PER_PAGE - 1);
+
       const { data, error, count } = await q;
-      if (error) throw error;
+      if (error) {
+        console.error("Videos query error:", error.message, error.details, error.hint);
+        throw error;
+      }
       return { data: data ?? [], count: count ?? 0 };
     },
     placeholderData: (prev) => prev,
     staleTime: 30 * 1000,
+    enabled: !!user,
   });
 
   const videos = pageResult?.data ?? [];
@@ -321,6 +327,7 @@ const Videos = () => {
       return { sources, formats };
     },
     staleTime: 5 * 60 * 1000,
+    enabled: !!user,
   });
   const sources: string[] = metaData?.sources ?? [];
   const formats: string[] = metaData?.formats ?? [];
@@ -513,8 +520,8 @@ const Videos = () => {
           </div>
         </div>
 
-        {/* Loading indicator */}
-        {(isLoading || isFetching) && (
+        {/* Loading indicator — seulement au premier chargement, pas pendant les refetches */}
+        {isLoading && (
           <div className="flex items-center gap-2 mb-4 text-xs text-muted-foreground">
             <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             Chargement…
@@ -522,7 +529,7 @@ const Videos = () => {
         )}
 
         {/* Grid */}
-        {!isLoading && videos.length === 0 ? (
+        {!isLoading && !isFetching && videos.length === 0 ? (
           <div className="text-center py-20">
             <Film size={48} className="mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground text-lg">

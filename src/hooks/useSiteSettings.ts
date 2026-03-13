@@ -102,7 +102,7 @@ export const DEFAULT_CMS: CmsSettings = {
   navbar_blur: true,
   footer_enabled: true,
   accent_color: "",
-  email_watermark: true,
+  email_watermark: false,
 };
 
 export const DEFAULT_VIDEO: VideoSettings = {
