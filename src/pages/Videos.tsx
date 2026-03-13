@@ -79,7 +79,7 @@ function applyFilters(
 ) {
   const { userId, search, sortBy, sourceFilter, formatFilter, durationFilter, activeTab, favoriteIds, watchedIds } = opts;
 
-  q = q.eq("is_active", true);
+  q = q.neq("is_active", false);
   if (userId) q = q.eq("user_id", userId);
 
   if (activeTab === "favorites") {
@@ -313,7 +313,7 @@ const Videos = () => {
   const { data: metaData } = useQuery({
     queryKey: ["videos-meta", user?.id],
     queryFn: async () => {
-      let q = supabase.from("imported_videos").select("source,format").eq("is_active", true);
+      let q = supabase.from("imported_videos").select("source,format").neq("is_active", false);
       if (user) q = q.eq("user_id", user.id);
       const { data } = await q;
       const sources = [...new Set((data ?? []).map((r: any) => r.source).filter(Boolean))].sort() as string[];
@@ -383,7 +383,7 @@ const Videos = () => {
 
   // ── Mix serveur-side ─────────────────────────────────────────────────────────
   const startMix = useCallback(async () => {
-    let q = supabase.from("imported_videos").select("id").eq("is_active", true).limit(200);
+    let q = supabase.from("imported_videos").select("id").neq("is_active", false).limit(200);
     if (user) q = q.eq("user_id", user.id);
     if (search.trim()) q = q.ilike("title", `%${search.trim()}%`);
     if (sourceFilter !== "all") {
