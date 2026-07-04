@@ -20,6 +20,7 @@ const Videos = lazy(() => import("./pages/Videos"));
 const Models = lazy(() => import("./pages/Models"));
 const VideoDetail = lazy(() => import("./pages/VideoDetail"));
 const Playlists = lazy(() => import("./pages/Playlists"));
+const OAuthConsent = lazy(() => import("./pages/OAuthConsent"));
 
 const queryClient = new QueryClient();
 
@@ -45,6 +46,7 @@ const App = () => (
                 <Route path="/video/:id" element={<VideoDetail />} />
                 <Route path="/models" element={<Models />} />
                 <Route path="/playlists" element={<Playlists />} />
+                <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
