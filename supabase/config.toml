@@ -1,4 +1,5 @@
-project_id = "zvrdkacarzyxekzowgyw"
+
+project_id = "nrjmxqmshjkthbhlalgc"
 
 [functions.video-token]
 verify_jwt = false
@@ -8,5 +9,9 @@ verify_jwt = false
 
 [functions.scan-durations]
 verify_jwt = false
+
 [functions.coomer-import]
+verify_jwt = false
+
+[functions.mcp]
 verify_jwt = false
