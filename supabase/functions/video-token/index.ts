@@ -52,7 +52,7 @@ async function debridLink(link: string, alldebridToken: string): Promise<{ url?:
     console.error("AllDebrid error:", JSON.stringify(data));
     
     if (errorCode === "AUTH_BLOCKED") {
-      return { error: `AUTH_BLOCKED: AllDebrid demande une autorisation depuis cette IP. Vérifiez vos emails AllDebrid et autorisez l'accès, ou créez un nouveau token API depuis alldebrid.com/apikeys avec l'option "Autoriser toutes les IP".` };
+      return { error: `AUTH_BLOCKED: AllDebrid demande une autorisation depuis cette IP.` };
     }
     
     return { error: `AllDebrid: ${errorCode} - ${errorMsg}` };
@@ -76,7 +76,7 @@ async function fallbackOneFichier(url: string): Promise<{ url?: string; error?: 
   try {
     const token = Deno.env.get("ONE_FICHIER_TOKEN");
     if (!token) {
-      return { error: "Token 1fichier non configuré" };
+      return { error: "Token 1fichier non configuré dans les secrets Deno" };
     }
 
     const response = await fetch("https://api.1fichier.com/v1/download/get_token.cgi", {
@@ -227,18 +227,18 @@ serve(async (req) => {
           .from("admin_settings")
           .select("value")
           .eq("id", "alldebrid_token")
-          .single();
-
-        if (!setting?.value) {
-          return new Response(JSON.stringify({ error: "Token AllDebrid non configuré." }), {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
+          .maybeSingle(); // CORRECTION: maybeSingle empêche de crasher si le token n'existe pas
 
         const linkToDebrid = video.original_url || videoUrl;
-        let result = await debridLink(linkToDebrid, setting.value);
+        let result: { url?: string; error?: string } = {};
 
+        if (setting?.value) {
+          result = await debridLink(linkToDebrid, setting.value);
+        } else {
+          result = { error: "Token AllDebrid non configuré." };
+        }
+
+        // Si AllDebrid échoue ou n'est pas configuré, on utilise le fallback 1fichier
         if (result.error) {
           const fallbackResult = await fallbackOneFichier(linkToDebrid);
           if (fallbackResult.url) {
@@ -271,7 +271,6 @@ serve(async (req) => {
       });
     }
 
-    // Action: refresh — get a new short-lived token for rotation
     if (action === "refresh") {
       const { videoId } = await req.json();
       if (!videoId) {
