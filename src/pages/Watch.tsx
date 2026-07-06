@@ -20,16 +20,13 @@ const Watch = () => {
   const [srcLoading, setSrcLoading] = useState(false);
   const [error, setError] = useState(false);
 
-  // Mix mode state
   const [mixIds, setMixIds] = useState<string[]>([]);
   const [mixIndex, setMixIndex] = useState(0);
   const isMixMode = mixIds.length > 0;
   const playerMounted = useRef(false);
 
-  // Preload cache for instant mix switching
   const preloadCache = useRef<Map<string, { video: any; src: string; modelName?: string }>>(new Map());
 
-  // Parse mix playlist on mount
   useEffect(() => {
     if (mixParam) {
       try {
@@ -42,7 +39,6 @@ const Watch = () => {
     }
   }, [mixParam]);
 
-  // Fetch signed URL for a video ID
   const fetchVideoData = useCallback(async (id: string): Promise<{ video: any; src: string; modelName?: string } | null> => {
     try {
       let query = supabase
@@ -67,24 +63,26 @@ const Watch = () => {
         return { video: data, src: "", modelName };
       }
 
-      // Google Drive : utiliser /preview (iframe natif, pas de token requis)
+      // Google Drive : ajout du paramètre autoplay=1
       if (data.original_url?.includes("drive.google.com")) {
         const match = data.original_url.match(/\/d\/([a-zA-Z0-9_-]+)/);
         const fileId = match?.[1] || data.metadata?.fileId;
-        const previewUrl = fileId
+        let previewUrl = fileId
           ? `https://drive.google.com/file/d/${fileId}/preview`
           : data.original_url;
+        
+        if (!previewUrl.includes("autoplay=1")) {
+          previewUrl += previewUrl.includes("?") ? "&autoplay=1" : "?autoplay=1";
+        }
+        
         return { video: data, src: previewUrl, modelName };
       }
 
-      // Use secure video URL fetcher
       const result = await getSecureVideoUrl(id);
       if (result) {
         return { video: data, src: result.blobUrl, modelName };
       }
       
-      // FALLBACK SÉCURISÉ : Ne PAS utiliser l'URL d'origine si c'est une page web 1fichier
-      // (sinon le lecteur vidéo plantera silencieusement en essayant de lire du HTML)
       if (data.original_url && !data.original_url.includes("1fichier.com/?")) {
         return { video: data, src: data.original_url, modelName };
       }
@@ -94,7 +92,6 @@ const Watch = () => {
     return null;
   }, [user]);
 
-  // Preload adjacent mix videos (URL + start buffering actual data)
   const preloadElements = useRef<Map<string, HTMLVideoElement>>(new Map());
   const preloadAdjacent = useCallback((currentIdx: number) => {
     if (!isMixMode) return;
@@ -105,7 +102,6 @@ const Watch = () => {
         fetchVideoData(id).then(result => {
           if (result) {
             preloadCache.current.set(id, result);
-            // Ne pas précharger avec un <video> caché si c'est un lien Google Drive
             if (!preloadElements.current.has(id) && !result.src.includes("drive.google.com")) {
               const vid = document.createElement("video");
               vid.preload = "auto";
@@ -128,7 +124,6 @@ const Watch = () => {
         }
       }
     }
-    // Cleanup old preload elements
     const keepIds = new Set(toPreload.map(i => mixIds[i]));
     for (const [id, vid] of preloadElements.current) {
       if (!keepIds.has(id)) {
@@ -139,7 +134,6 @@ const Watch = () => {
     }
   }, [isMixMode, mixIds, fetchVideoData]);
 
-  // Fetch video metadata + signed URL
   useEffect(() => {
     const currentId = isMixMode ? mixIds[mixIndex] : videoId;
     if (!currentId) { setInitialLoading(false); return; }
@@ -200,7 +194,7 @@ const Watch = () => {
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
         <ShieldAlert size={48} className="text-primary" />
         <h2 className="text-xl font-semibold text-foreground">Contenu Premium</h2>
-        <p className="text-muted-foreground text-center max-w-md">Connectez-vous pour accéder aux vidéos complètes. Les extraits sont disponibles sur la page d'accueil.</p>
+        <p className="text-muted-foreground text-center max-w-md">Connectez-vous pour accéder aux vidéos complètes.</p>
         <button onClick={() => navigate("/auth")} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-semibold hover:bg-primary/90 transition-colors">
           Se connecter
         </button>
