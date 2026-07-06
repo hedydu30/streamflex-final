@@ -25,11 +25,6 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Fetch a signed URL via the edge function (handles debriding for 1fichier, etc.)
- * Returns { blobUrl, expiresAt } or null.
- */
-
-/**
  * Fetch a signed URL and convert to a Blob URL to hide the real source.
  * Returns { blobUrl, expiresAt } or null.
  */
@@ -66,6 +61,7 @@ export async function getSecureVideoUrl(videoId: string): Promise<{ blobUrl: str
       },
       body: JSON.stringify({ videoId }),
     });
+    
     if (!signRes.ok) {
       console.warn("video-token sign error:", signRes.status, await signRes.text().catch(() => ""));
       return null;
@@ -83,28 +79,34 @@ export async function getSecureVideoUrl(videoId: string): Promise<{ blobUrl: str
         },
       }
     );
+    
     if (!res.ok) {
       console.warn("video-token stream error:", res.status, await res.text().catch(() => ""));
       return null;
     }
-    const streamData = await res.json();
-    if (!streamData.url) return null;
 
-    // Step 3: Fetch the actual video and create a Blob URL to hide the source
-    // For large files, we just use the URL directly but wrapped in a blob reference
-    // Note: For very large files, full blob download isn't practical, so we use the URL
-    // but rotate it frequently
-    const blobUrl = streamData.url;
+    // Gérer à la fois une réponse JSON et une redirection directe (302 vers le flux)
+    let blobUrl = "";
+    const contentType = res.headers.get("content-type");
     
+    if (contentType && contentType.includes("application/json")) {
+      const streamData = await res.json();
+      if (!streamData.url) return null;
+      blobUrl = streamData.url;
+    } else {
+      blobUrl = res.url;
+    }
+
     urlCache.set(videoId, {
-      url: streamData.url,
-      blobUrl,
+      url: blobUrl,
+      blobUrl: blobUrl,
       expiresAt: tokenData.expiresAt,
       token: tokenData.token,
     });
 
     return { blobUrl, expiresAt: tokenData.expiresAt };
-  } catch {
+  } catch (err) {
+    console.error("Erreur dans getSecureVideoUrl:", err);
     return null;
   }
 }
