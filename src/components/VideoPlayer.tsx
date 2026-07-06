@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { refreshVideoToken } from "@/lib/secure-video";
 import { usePlayerSettings, getPlayerStyles } from "@/hooks/usePlayerSettings";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
@@ -53,6 +54,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   const { settings: playerSettings } = usePlayerSettings();
   const playerStyles = getPlayerStyles(playerSettings);
 
+  const isIframe = src?.includes("drive.google.com") && src?.includes("/preview");
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -61,7 +64,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [buffered, setBuffered] = useState(0);
-  const [isLoading, setIsLoading] = useState(() => !src?.includes('drive.google.com'));
+  const [isLoading, setIsLoading] = useState(() => !isIframe);
   const [resumePosition, setResumePosition] = useState<number | null>(null);
   const [showResumePrompt, setShowResumePrompt] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -89,7 +92,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   // --- Progress load/save ---
   useEffect(() => {
-    if (!user || !videoId) return;
+    if (!user || !videoId || isIframe) return;
     const loadProgress = async () => {
       const { data } = await supabase
         .from("video_progress")
@@ -116,10 +119,10 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       }
     };
     loadProgress();
-  }, [user, videoId]);
+  }, [user, videoId, isIframe]);
 
   const saveProgress = useCallback(async (time: number, dur: number) => {
-    if (!user || !videoId || dur === 0) return;
+    if (!user || !videoId || dur === 0 || isIframe) return;
     const now = Date.now();
     if (now - lastSaveRef.current < SAVE_INTERVAL * 1000) return;
     lastSaveRef.current = now;
@@ -137,7 +140,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       );
     }
     await supabase.from("imported_videos").update({ last_accessed_at: new Date().toISOString() }).eq("id", videoId).eq("user_id", user.id);
-  }, [user, videoId, contentId]);
+  }, [user, videoId, contentId, isIframe]);
 
   // --- Playback handlers ---
   const autoPlayAttemptedRef = useRef(false);
@@ -146,17 +149,17 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     setDuration(video.duration);
     if (user && videoId && video.duration && isFinite(video.duration)) {
       supabase.from("imported_videos").update({ duration_seconds: Math.floor(video.duration) }).eq("id", videoId).eq("user_id", user.id).is("duration_seconds", null);
     }
-  }, [user, videoId]);
+  }, [user, videoId, isIframe]);
 
   const handleCanPlay = useCallback(() => {
     setIsLoading(false);
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     if (isMixTransition.current) {
       isMixTransition.current = false;
       video.play().catch(() => { video.muted = true; setIsMuted(true); video.play().catch(() => {}); });
@@ -166,24 +169,24 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     if (!autoPlay || autoPlayAttemptedRef.current || showResumePrompt) return;
     autoPlayAttemptedRef.current = true;
     video.play().catch(() => { video.muted = true; setIsMuted(true); video.play().catch(() => {}); });
-  }, [autoPlay]);
+  }, [autoPlay, isIframe, showResumePrompt]);
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-    controlsTimeoutRef.current = setTimeout(() => { if (isPlaying) setShowControls(false); }, 3000);
-  }, [isPlaying]);
+    controlsTimeoutRef.current = setTimeout(() => { if (isPlaying || isIframe) setShowControls(false); }, 3000);
+  }, [isPlaying, isIframe]);
 
   const handleTimeUpdate = useCallback(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     setCurrentTime(video.currentTime);
     saveProgress(video.currentTime, video.duration);
-  }, [saveProgress]);
+  }, [saveProgress, isIframe]);
 
   const handleProgress = () => {
     const video = videoRef.current;
-    if (!video || video.buffered.length === 0) return;
+    if (!video || video.buffered.length === 0 || isIframe) return;
     setBuffered((video.buffered.end(video.buffered.length - 1) / video.duration) * 100);
   };
 
@@ -210,14 +213,13 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     } else if (onNext && hasNext) {
       setTimeout(() => onNext(), 1500);
     } else {
-      // Show end screen recommendations
       setShowEndScreen(true);
     }
   }, [user, contentId, duration, videoId, onNext, hasNext, playerSettings.loop]);
 
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
-    if (!video || !video.src) return;
+    if (!video || !video.src || isIframe) return;
     if (video.paused || video.ended) {
       video.play().then(() => {
         setIsPlaying(true);
@@ -228,24 +230,24 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       setIsPlaying(false);
       logEvent("pause", videoId, { position: Math.floor(video.currentTime) });
     }
-  }, [videoId, logEvent]);
+  }, [videoId, logEvent, isIframe]);
 
   const seek = (value: number[]) => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     video.currentTime = value[0];
     setCurrentTime(value[0]);
   };
 
   const skip = (seconds: number) => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + seconds));
   };
 
   const changeVolume = (value: number[]) => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     const vol = value[0];
     video.volume = vol;
     setVolume(vol);
@@ -254,7 +256,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const toggleMute = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     video.muted = !video.muted;
     setIsMuted(video.muted);
   };
@@ -267,7 +269,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const resumePlayback = () => {
     const video = videoRef.current;
-    if (!video || resumePosition === null) return;
+    if (!video || resumePosition === null || isIframe) return;
     video.currentTime = resumePosition;
     video.play().catch(() => {});
     setIsPlaying(true);
@@ -276,7 +278,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const startFromBeginning = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || isIframe) return;
     video.currentTime = 0;
     video.play().catch(() => {});
     setIsPlaying(true);
@@ -285,14 +287,14 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const setSpeed = (rate: number) => {
     setPlaybackRate(rate);
-    if (videoRef.current) videoRef.current.playbackRate = rate;
+    if (videoRef.current && !isIframe) videoRef.current.playbackRate = rate;
     setShowSpeedMenu(false);
   };
 
   // --- Keyboard shortcuts ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || isIframe) return;
       switch (e.key) {
         case " ": case "k": e.preventDefault(); togglePlay(); break;
         case "ArrowLeft": e.preventDefault(); skip(-5); break;
@@ -306,12 +308,11 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
           if (showSettingsPanel) setShowSettingsPanel(false);
           else if (onClose && !isFullscreen) onClose();
           break;
-        case ",": e.preventDefault(); skip(-1 / 30); break; // frame back
-        case ".": e.preventDefault(); skip(1 / 30); break; // frame forward
+        case ",": e.preventDefault(); skip(-1 / 30); break;
+        case ".": e.preventDefault(); skip(1 / 30); break;
         case "<": e.preventDefault(); { const i = SPEED_OPTIONS.indexOf(playbackRate); if (i > 0) setSpeed(SPEED_OPTIONS[i - 1]); } break;
         case ">": e.preventDefault(); { const i = SPEED_OPTIONS.indexOf(playbackRate); if (i < SPEED_OPTIONS.length - 1) setSpeed(SPEED_OPTIONS[i + 1]); } break;
         default:
-          // 0-9 jump to percentage
           if (e.key >= "0" && e.key <= "9" && duration > 0) {
             e.preventDefault();
             const pct = parseInt(e.key) / 10;
@@ -322,13 +323,13 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [volume, isFullscreen, isPlaying, showSettingsPanel, playbackRate, duration]);
+  }, [volume, isFullscreen, isPlaying, showSettingsPanel, playbackRate, duration, isIframe]);
 
   // --- Source management ---
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !src) return;
+    if (!src) return;
     if (src !== prevSrcRef.current) {
       const isFirstLoad = prevSrcRef.current === null;
       isMixTransition.current = !isFirstLoad && !!onNext;
@@ -336,20 +337,21 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       autoPlayAttemptedRef.current = false;
       if (!isFirstLoad) {
         setCurrentTime(0); setDuration(0); setBuffered(0);
-        if (!isMixTransition.current) setIsLoading(!src?.includes('drive.google.com'));
+        if (!isMixTransition.current) setIsLoading(!isIframe);
         setShowResumePrompt(false); setResumePosition(null); lastSaveRef.current = 0;
         setShowEndScreen(false);
       }
-      if (!isMixTransition.current) video.pause();
-      video.src = src;
-      video.load();
-      // Timeout de sécurité : forcer isLoading=false après 10s si canplay ne déclenche pas
+      if (video && !isIframe) {
+        if (!isMixTransition.current) video.pause();
+        video.src = src;
+        video.load();
+      }
       if (loadingTimeoutRef.current) clearTimeout(loadingTimeoutRef.current);
-      if (!src.includes('drive.google.com')) {
+      if (!isIframe) {
         loadingTimeoutRef.current = setTimeout(() => setIsLoading(false), 10000);
       }
     }
-  }, [src, onNext]);
+  }, [src, onNext, isIframe]);
 
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -360,7 +362,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   useEffect(() => {
     return () => {
       const video = videoRef.current;
-      if (video && user && videoId && video.duration > 0) {
+      if (video && user && videoId && video.duration > 0 && !isIframe) {
         const percent = Math.round((video.currentTime / video.duration) * 100);
         supabase.from("video_progress").upsert(
           { user_id: user.id, video_id: videoId, position_seconds: Math.floor(video.currentTime), duration_seconds: Math.floor(video.duration), watched_percent: percent, completed: percent >= 95, updated_at: new Date().toISOString() },
@@ -368,15 +370,21 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         );
       }
     };
-  }, [user, videoId]);
+  }, [user, videoId, isIframe]);
 
-  // Anti-download: block right-click and common download shortcuts on container
+  useEffect(() => {
+    if (!isPlaying || !videoId || isIframe) return;
+    const interval = setInterval(() => {
+      refreshVideoToken(videoId).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [isPlaying, videoId, isIframe]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const blockContext = (e: MouseEvent) => { e.preventDefault(); };
     const blockKeys = (e: KeyboardEvent) => {
-      // Block Ctrl+S, Ctrl+Shift+I (devtools), Ctrl+U (view source)
       if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S" || e.key === "u" || e.key === "U")) {
         e.preventDefault();
       }
@@ -400,7 +408,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
 
   const liked = isFavorite(videoId);
 
-  // Compute video styles from settings
   const videoObjectFit = playerSettings.autoAdapt
     ? (playerSettings.ratio !== "native" ? "cover" : "contain")
     : playerSettings.fitMode;
@@ -416,7 +423,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   return (
     <div
       ref={containerRef}
-      className="relative w-full bg-black overflow-hidden group touch-none"
+      className={cn("relative w-full bg-black overflow-hidden group", !isIframe && "touch-none")}
       style={{
         borderRadius: `${playerSettings.borderRadius}px`,
         background: playerSettings.bgColor,
@@ -425,7 +432,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       onMouseLeave={() => { if (isPlaying) setShowControls(false); setShowVolumeSlider(false); }}
       {...swipeHandlers}
     >
-      {/* Vertical Prev/Next nav arrows with red shadow */}
+      {/* Vertical Prev/Next nav arrows */}
       {onPrev !== undefined && (
         <button
           onClick={(e) => { e.stopPropagation(); if (hasPrev) onPrev(); }}
@@ -453,8 +460,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </button>
       )}
 
-      {/* Video element — iframe pour Google Drive /preview, <video> sinon */}
-      {src.includes("drive.google.com") && src.includes("/preview") ? (
+      {/* Video element — iframe ou <video> */}
+      {isIframe ? (
         <iframe
           src={src}
           className="w-full"
@@ -470,48 +477,48 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
           title={title}
         />
       ) : (
-      <video
-        ref={videoRef}
-        className="w-full cursor-pointer"
-        style={{
-          objectFit: videoObjectFit as any,
-          background: "black",
-          height: playerStyles.aspectRatio ? "auto" : "100vh",
-          aspectRatio: playerStyles.aspectRatio || undefined,
-          maxHeight: "100vh",
-          borderRadius: `${playerSettings.borderRadius}px`,
-          transform: playerSettings.rotation ? `rotate(${playerSettings.rotation}deg) scale(${(playerSettings.zoom || 100) / 100})` : `scale(${(playerSettings.zoom || 100) / 100})`,
-          filter: videoFilter,
-          border: playerStyles.border,
-          boxShadow: playerStyles.boxShadow,
-          objectPosition: playerSettings.position || "center",
-        }}
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlay(); }}
-        onDoubleClick={toggleFullscreen}
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-        onProgress={handleProgress}
-        onEnded={handleEnded}
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-        onWaiting={() => setIsLoading(true)}
-        onCanPlay={handleCanPlay}
-        onError={(e) => { console.error("Video error:", (e.target as HTMLVideoElement).error); setIsLoading(false); }}
-        playsInline
-        preload="auto"
-        loop={playerSettings.loop}
-      />
+        <video
+          ref={videoRef}
+          className="w-full cursor-pointer"
+          style={{
+            objectFit: videoObjectFit as any,
+            background: "black",
+            height: playerStyles.aspectRatio ? "auto" : "100vh",
+            aspectRatio: playerStyles.aspectRatio || undefined,
+            maxHeight: "100vh",
+            borderRadius: `${playerSettings.borderRadius}px`,
+            transform: playerSettings.rotation ? `rotate(${playerSettings.rotation}deg) scale(${(playerSettings.zoom || 100) / 100})` : `scale(${(playerSettings.zoom || 100) / 100})`,
+            filter: videoFilter,
+            border: playerStyles.border,
+            boxShadow: playerStyles.boxShadow,
+            objectPosition: playerSettings.position || "center",
+          }}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlay(); }}
+          onDoubleClick={toggleFullscreen}
+          onTimeUpdate={handleTimeUpdate}
+          onLoadedMetadata={handleLoadedMetadata}
+          onProgress={handleProgress}
+          onEnded={handleEnded}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onWaiting={() => setIsLoading(true)}
+          onCanPlay={handleCanPlay}
+          onError={(e) => { console.error("Video error:", (e.target as HTMLVideoElement).error); setIsLoading(false); }}
+          playsInline
+          preload="auto"
+          loop={playerSettings.loop}
+        />
       )}
 
       {/* Loading spinner */}
-      {isLoading && (
+      {isLoading && !isIframe && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
           <div className="w-12 h-12 border-4 border-[#FF1B6B] border-t-transparent rounded-full animate-spin" />
         </div>
       )}
 
       {/* Resume prompt */}
-      {showResumePrompt && (
+      {showResumePrompt && !isIframe && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
           <div className="bg-card border border-border rounded-lg p-6 max-w-sm text-center space-y-4">
             <RotateCcw className="mx-auto text-[#FF1B6B]" size={32} />
@@ -531,18 +538,18 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       )}
 
-      {/* Central play button — rose, circular, pulsing */}
-      {!isPlaying && !isLoading && !showResumePrompt && (
-        <div className="absolute inset-0 flex items-center justify-center z-30"
+      {/* Central play button — Hidden for iframes so it doesn't block interaction */}
+      {!isPlaying && !isLoading && !showResumePrompt && !isIframe && (
+        <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlay(); }}
         >
-          <button className="w-20 h-20 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center hover:scale-115 transition-transform animate-pulse pointer-events-none shadow-lg shadow-[#FF1B6B]/40">
+          <button className="w-20 h-20 rounded-full bg-[#FF1B6B]/90 text-white flex items-center justify-center hover:scale-115 transition-transform animate-pulse shadow-lg shadow-[#FF1B6B]/40 pointer-events-auto">
             <Play size={36} fill="currentColor" className="ml-1" />
           </button>
         </div>
       )}
 
-      {/* Header — gradient top bar */}
+      {/* Header — gradient top bar (Always visible so users can close/like) */}
       <div
         className={cn(
           "absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-300 z-20",
@@ -605,14 +612,14 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       </div>
 
-      {/* Bottom controls */}
+      {/* Bottom controls - Hidden for iframe because it relies on native <video> API */}
+      {!isIframe && (
       <div
         className={cn(
           "absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 to-transparent pt-12 pb-3 px-4 transition-opacity duration-300 z-20",
           showControls ? "opacity-100" : "opacity-0 pointer-events-none"
         )}
       >
-        {/* Progress bar - thick rose style with thumbnail preview */}
         <div
           className="relative w-full mb-3 group/progress cursor-pointer"
           style={{ height: "20px", display: "flex", alignItems: "center" }}
@@ -622,7 +629,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
             setHoverTime(pct * (duration || 0));
             setHoverPct(pct * 100);
             setShowHoverTime(true);
-            // Generate thumbnail from video
             const video = videoRef.current;
             if (video && duration > 0) {
               if (!thumbnailVideoRef.current) {
@@ -655,7 +661,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
           }}
           onMouseLeave={() => { setShowHoverTime(false); setThumbnailUrl(null); }}
         >
-          {/* Thumbnail + time tooltip */}
           {duration > 0 && (
             <div
               className={cn(
@@ -687,10 +692,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
           />
         </div>
 
-        {/* Controls row */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1 md:gap-2.5">
-            {/* Play/Pause */}
             <button onClick={togglePlay} className="text-white hover:text-[#00FFFF] transition-colors p-2 min-w-[44px] min-h-[44px] flex items-center justify-center">
               {isPlaying ? <Pause size={24} /> : <Play size={24} fill="currentColor" />}
             </button>
@@ -701,7 +704,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
               <SkipForward size={20} />
             </button>
 
-            {/* Volume with vertical slider */}
             <div
               className="relative"
               onMouseEnter={() => setShowVolumeSlider(true)}
@@ -724,14 +726,12 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
               )}
             </div>
 
-            {/* Timer */}
             <span className="text-white/80 text-[10px] md:text-xs font-mono tabular-nums ml-1">
               {formatTime(currentTime)} / {formatTime(duration)}
             </span>
           </div>
 
           <div className="flex items-center gap-1.5 md:gap-2">
-            {/* Speed selector */}
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setShowSpeedMenu(v => !v); setShowQualityMenu(false); }}
@@ -759,7 +759,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
               )}
             </div>
 
-            {/* Quality */}
             <div className="relative">
               <button
                 onClick={(e) => { e.stopPropagation(); setShowQualityMenu(v => !v); setShowSpeedMenu(false); }}
@@ -793,7 +792,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
               )}
             </div>
 
-            {/* Picture-in-Picture */}
             {document.pictureInPictureEnabled && (
               <button
                 onClick={(e) => {
@@ -813,68 +811,46 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
               </button>
             )}
 
-            {/* Fullscreen */}
             <button onClick={toggleFullscreen} className="text-white hover:text-[#00FFFF] transition-colors p-1">
               {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
             </button>
           </div>
         </div>
       </div>
+      )}
 
-      {/* Dynamic watermark */}
       {user && cms.email_watermark && (
         <div className="absolute inset-0 z-10 pointer-events-none select-none overflow-hidden">
           <div
             className="absolute text-white/15 text-sm font-medium tracking-wider"
-            style={{
-              top: `${20 + ((Date.now() / 10000) % 60)}%`,
-              left: `${10 + ((Date.now() / 7000) % 60)}%`,
-              transform: "rotate(-25deg)",
-            }}
+            style={{ top: `${20 + ((Date.now() / 10000) % 60)}%`, left: `${10 + ((Date.now() / 7000) % 60)}%`, transform: "rotate(-25deg)" }}
           >
             {user.email || user.id.slice(0, 12)}
           </div>
-          <div
-            className="absolute text-white/10 text-xs"
-            style={{ bottom: "15%", right: "5%", transform: "rotate(-15deg)" }}
-          >
+          <div className="absolute text-white/10 text-xs" style={{ bottom: "15%", right: "5%", transform: "rotate(-15deg)" }}>
             {user.email || user.id.slice(0, 12)}
           </div>
         </div>
       )}
 
-      {/* End screen recommendations */}
-      {showEndScreen && (
+      {showEndScreen && !isIframe && (
         <EndScreenRecommendations
           currentVideoId={videoId}
           modelId={modelId}
           modelName={modelName}
-          onPlayVideo={(id) => {
-            setShowEndScreen(false);
-            playerNavigate(`/watch?v=${id}`);
-          }}
+          onPlayVideo={(id) => { setShowEndScreen(false); playerNavigate(`/watch?v=${id}`); }}
           onReplay={() => {
             setShowEndScreen(false);
             const video = videoRef.current;
-            if (video) {
-              video.currentTime = 0;
-              video.play().catch(() => {});
-              setIsPlaying(true);
-            }
+            if (video) { video.currentTime = 0; video.play().catch(() => {}); setIsPlaying(true); }
           }}
           onClose={() => setShowEndScreen(false)}
         />
       )}
 
-      {/* Settings panel (slide-in from right) */}
       {showSettingsPanel && (
         <div className="absolute top-0 right-0 bottom-0 w-[380px] max-w-full bg-background/95 backdrop-blur-md border-l border-border z-40 animate-slide-in-right">
-          <PlayerSettingsPanel
-            settings={playerSettings}
-            onChange={() => {}}
-            onClose={() => setShowSettingsPanel(false)}
-            compact
-          />
+          <PlayerSettingsPanel settings={playerSettings} onChange={() => {}} onClose={() => setShowSettingsPanel(false)} compact />
         </div>
       )}
     </div>
