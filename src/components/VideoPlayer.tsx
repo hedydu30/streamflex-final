@@ -1,7 +1,6 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { refreshVideoToken } from "@/lib/secure-video";
 import { usePlayerSettings, getPlayerStyles } from "@/hooks/usePlayerSettings";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
@@ -371,7 +370,9 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     };
   }, [user, videoId]);
 
-  // Token rotation: refresh every 30s during playback
+  // Token rotation DÉSACTIVÉE : Provoque des coupures prématurées des streams
+  // chez les débrideurs. On laisse le lien initial courir jusqu'à sa fin.
+  /*
   useEffect(() => {
     if (!isPlaying || !videoId) return;
     const interval = setInterval(() => {
@@ -379,6 +380,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     }, 30_000);
     return () => clearInterval(interval);
   }, [isPlaying, videoId]);
+  */
 
   // Anti-download: block right-click and common download shortcuts on container
   useEffect(() => {
@@ -845,50 +847,3 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
             {user.email || user.id.slice(0, 12)}
           </div>
           <div
-            className="absolute text-white/10 text-xs"
-            style={{ bottom: "15%", right: "5%", transform: "rotate(-15deg)" }}
-          >
-            {user.email || user.id.slice(0, 12)}
-          </div>
-        </div>
-      )}
-
-      {/* End screen recommendations */}
-      {showEndScreen && (
-        <EndScreenRecommendations
-          currentVideoId={videoId}
-          modelId={modelId}
-          modelName={modelName}
-          onPlayVideo={(id) => {
-            setShowEndScreen(false);
-            playerNavigate(`/watch?v=${id}`);
-          }}
-          onReplay={() => {
-            setShowEndScreen(false);
-            const video = videoRef.current;
-            if (video) {
-              video.currentTime = 0;
-              video.play().catch(() => {});
-              setIsPlaying(true);
-            }
-          }}
-          onClose={() => setShowEndScreen(false)}
-        />
-      )}
-
-      {/* Settings panel (slide-in from right) */}
-      {showSettingsPanel && (
-        <div className="absolute top-0 right-0 bottom-0 w-[380px] max-w-full bg-background/95 backdrop-blur-md border-l border-border z-40 animate-slide-in-right">
-          <PlayerSettingsPanel
-            settings={playerSettings}
-            onChange={() => {}}
-            onClose={() => setShowSettingsPanel(false)}
-            compact
-          />
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default VideoPlayer;
