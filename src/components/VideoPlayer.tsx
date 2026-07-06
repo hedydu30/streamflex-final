@@ -78,6 +78,7 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
   const [showVolumeSlider, setShowVolumeSlider] = useState(false);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [showEndScreen, setShowEndScreen] = useState(false);
+  
   const thumbnailCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const thumbnailVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -90,7 +91,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     { value: "360p", label: "360p" },
   ];
 
-  // --- Progress load/save ---
   useEffect(() => {
     if (!user || !videoId || isIframe) return;
     const loadProgress = async () => {
@@ -142,7 +142,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     await supabase.from("imported_videos").update({ last_accessed_at: new Date().toISOString() }).eq("id", videoId).eq("user_id", user.id);
   }, [user, videoId, contentId, isIframe]);
 
-  // --- Playback handlers ---
   const autoPlayAttemptedRef = useRef(false);
   const prevSrcRef = useRef<string | null>(null);
   const isMixTransition = useRef(false);
@@ -291,7 +290,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     setShowSpeedMenu(false);
   };
 
-  // --- Keyboard shortcuts ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || isIframe) return;
@@ -325,8 +323,8 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [volume, isFullscreen, isPlaying, showSettingsPanel, playbackRate, duration, isIframe]);
 
-  // --- Source management ---
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   useEffect(() => {
     const video = videoRef.current;
     if (!src) return;
@@ -432,7 +430,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
       onMouseLeave={() => { if (isPlaying) setShowControls(false); setShowVolumeSlider(false); }}
       {...swipeHandlers}
     >
-      {/* Vertical Prev/Next nav arrows */}
       {onPrev !== undefined && (
         <button
           onClick={(e) => { e.stopPropagation(); if (hasPrev) onPrev(); }}
@@ -460,7 +457,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </button>
       )}
 
-      {/* Video element — iframe ou <video> */}
       {isIframe ? (
         <iframe
           src={src}
@@ -499,25 +495,35 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
           onLoadedMetadata={handleLoadedMetadata}
           onProgress={handleProgress}
           onEnded={handleEnded}
-          onPlay={() => setIsPlaying(true)}
+          onPlay={() => { setIsPlaying(true); setIsLoading(false); }}
+          onPlaying={() => { setIsPlaying(true); setIsLoading(false); }}
           onPause={() => setIsPlaying(false)}
           onWaiting={() => setIsLoading(true)}
           onCanPlay={handleCanPlay}
-          onError={(e) => { console.error("Video error:", (e.target as HTMLVideoElement).error); setIsLoading(false); }}
+          onError={(e) => {
+            const target = e.target as HTMLVideoElement;
+            console.error("Video error:", target.error);
+            setIsLoading(false);
+            if (target.error) {
+              toast({
+                title: "Erreur de lecture",
+                description: "Format non supporté (ex: MKV) ou lien débrideur refusé.",
+                variant: "destructive"
+              });
+            }
+          }}
           playsInline
           preload="auto"
           loop={playerSettings.loop}
         />
       )}
 
-      {/* Loading spinner */}
       {isLoading && !isIframe && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
           <div className="w-12 h-12 border-4 border-[#FF1B6B] border-t-transparent rounded-full animate-spin" />
         </div>
       )}
 
-      {/* Resume prompt */}
       {showResumePrompt && !isIframe && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
           <div className="bg-card border border-border rounded-lg p-6 max-w-sm text-center space-y-4">
@@ -538,7 +544,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       )}
 
-      {/* Central play button — Hidden for iframes so it doesn't block interaction */}
       {!isPlaying && !isLoading && !showResumePrompt && !isIframe && (
         <div className="absolute inset-0 flex items-center justify-center z-30 pointer-events-none"
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); togglePlay(); }}
@@ -549,7 +554,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       )}
 
-      {/* Header — gradient top bar (Always visible so users can close/like) */}
       <div
         className={cn(
           "absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 to-transparent transition-opacity duration-300 z-20",
@@ -612,7 +616,6 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
         </div>
       </div>
 
-      {/* Bottom controls - Hidden for iframe because it relies on native <video> API */}
       {!isIframe && (
       <div
         className={cn(
@@ -629,31 +632,38 @@ const VideoPlayer = ({ videoId, src, title, autoPlay = true, onClose, contentId,
             setHoverTime(pct * (duration || 0));
             setHoverPct(pct * 100);
             setShowHoverTime(true);
+            
             const video = videoRef.current;
             if (video && duration > 0) {
               if (!thumbnailVideoRef.current) {
                 const tv = document.createElement("video");
-                tv.src = video.src;
-                tv.preload = "auto";
+                // IMPORTANT: SUPPRESSION DE crossOrigin="anonymous" POUR ÉVITER LE BUG CORS
                 tv.muted = true;
-                tv.crossOrigin = "anonymous";
+                tv.preload = "auto";
+                tv.src = video.src;
+                tv.load();
                 thumbnailVideoRef.current = tv;
               }
-              if (!thumbnailCanvasRef.current) {
-                thumbnailCanvasRef.current = document.createElement("canvas");
-                thumbnailCanvasRef.current.width = 160;
-                thumbnailCanvasRef.current.height = 90;
-              }
               const tv = thumbnailVideoRef.current;
-              const targetTime = pct * duration;
-              tv.currentTime = targetTime;
+              tv.currentTime = pct * duration;
               tv.onseeked = () => {
                 const canvas = thumbnailCanvasRef.current;
-                if (canvas) {
-                  const ctx = canvas.getContext("2d");
+                if (!canvas) {
+                  thumbnailCanvasRef.current = document.createElement("canvas");
+                  thumbnailCanvasRef.current.width = 160;
+                  thumbnailCanvasRef.current.height = 90;
+                }
+                const activeCanvas = thumbnailCanvasRef.current;
+                if (activeCanvas) {
+                  const ctx = activeCanvas.getContext("2d");
                   if (ctx) {
                     ctx.drawImage(tv, 0, 0, 160, 90);
-                    setThumbnailUrl(canvas.toDataURL("image/jpeg", 0.6));
+                    try {
+                      // Try/Catch obligatoire car certains flux refuseront l'export de l'image (Tainted Canvas)
+                      setThumbnailUrl(activeCanvas.toDataURL("image/jpeg", 0.6));
+                    } catch (err) {
+                      setThumbnailUrl(null);
+                    }
                   }
                 }
               };
