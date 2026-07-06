@@ -77,22 +77,24 @@ const Watch = () => {
         return { video: data, src: previewUrl, modelName };
       }
 
-      // Use secure video URL fetcher — fallback sur original_url si échec
+      // Use secure video URL fetcher
       const result = await getSecureVideoUrl(id);
       if (result) {
         return { video: data, src: result.blobUrl, modelName };
       }
-      // Fallback : utiliser original_url directement (vidéos "direct" ou coomer accessibles)
-      if (data.original_url) {
+      
+      // Fallback : utiliser original_url directement SEULEMENT si c'est un fichier vidéo (mp4, webm, mkv, etc.)
+      // Cela évite de charger la page HTML de 1fichier dans le lecteur en cas d'erreur du débrideur
+      if (data.original_url && data.original_url.match(/\.(mp4|webm|mkv|avi|mov|m4v)$/i)) {
         return { video: data, src: data.original_url, modelName };
       }
+      
       return null;
     } catch {}
     return null;
   }, [user]);
 
-  // Preload adjacent mix videos (URL + start buffering actual data)
-  const preloadElements = useRef<Map<string, HTMLVideoElement>>(new Map());
+  // Preload adjacent mix videos (URL only, no hidden video elements to prevent flood/IP bans)
   const preloadAdjacent = useCallback((currentIdx: number) => {
     if (!isMixMode) return;
     const toPreload = [currentIdx + 1, currentIdx - 1].filter(i => i >= 0 && i < mixIds.length);
@@ -102,37 +104,8 @@ const Watch = () => {
         fetchVideoData(id).then(result => {
           if (result) {
             preloadCache.current.set(id, result);
-            // Create hidden video element to start buffering
-            if (!preloadElements.current.has(id)) {
-              const vid = document.createElement("video");
-              vid.preload = "auto";
-              vid.muted = true;
-              vid.src = result.src;
-              vid.load();
-              preloadElements.current.set(id, vid);
-            }
           }
         });
-      } else if (!preloadElements.current.has(id)) {
-        // URL cached but not buffering yet
-        const cached = preloadCache.current.get(id);
-        if (cached) {
-          const vid = document.createElement("video");
-          vid.preload = "auto";
-          vid.muted = true;
-          vid.src = cached.src;
-          vid.load();
-          preloadElements.current.set(id, vid);
-        }
-      }
-    }
-    // Cleanup old preload elements (keep only adjacent)
-    const keepIds = new Set(toPreload.map(i => mixIds[i]));
-    for (const [id, vid] of preloadElements.current) {
-      if (!keepIds.has(id)) {
-        vid.src = "";
-        vid.load();
-        preloadElements.current.delete(id);
       }
     }
   }, [isMixMode, mixIds, fetchVideoData]);
